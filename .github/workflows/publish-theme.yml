@@ -1,0 +1,55 @@
+name: Publish bundled theme catalog artifact
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'themes/luminaplus/**'
+      - '.github/workflows/publish-theme.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-theme-dist
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: themes/luminaplus/package-lock.json
+      - run: npm ci --prefix themes/luminaplus
+      - run: npm run build --prefix themes/luminaplus
+      - name: Publish immutable theme source branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          remote="https://github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --heads "$remote" refs/heads/theme-dist | grep -q .; then
+            git clone -q --branch theme-dist --single-branch "$remote" "$RUNNER_TEMP/theme-dist"
+          else
+            git init -q -b theme-dist "$RUNNER_TEMP/theme-dist"
+            git -C "$RUNNER_TEMP/theme-dist" remote add origin "$remote"
+          fi
+          find "$RUNNER_TEMP/theme-dist" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -R public/themes/luminaplus/. "$RUNNER_TEMP/theme-dist/"
+          cd "$RUNNER_TEMP/theme-dist"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            version="v$(node -p "require('$GITHUB_WORKSPACE/themes/luminaplus/package.json').version")"
+            git commit -m "$version bundled LuminaPlus"
+            git push origin HEAD:theme-dist
+          fi

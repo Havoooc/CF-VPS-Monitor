@@ -1,0 +1,54 @@
+name: Build and deploy CF-VPS-Monitor
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+      - 'LICENSE'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-secrets:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          if [ -n "$ACCOUNT_ID" ] && [ -n "$API_TOKEN" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Cloudflare secrets are not configured; deployment skipped."
+          fi
+
+  deploy:
+    needs: check-secrets
+    if: needs.check-secrets.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            themes/luminaplus/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix themes/luminaplus
+      - run: npm run build:frontend
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          wranglerVersion: '4'
+          command: deploy

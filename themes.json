@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "themes": [
+    {
+      "id": "luminaplus",
+      "title": "LuminaPlus",
+      "description": "内置默认主题；源码和版本维护在本仓库。",
+      "author": "Havoooc",
+      "url": "https://github.com/Havoooc/CF-VPS-Monitor/tree/theme-dist",
+      "branch": "theme-dist",
+      "tags": ["默认", "响应式", "三网回程"]
+    }
+  ]
+}

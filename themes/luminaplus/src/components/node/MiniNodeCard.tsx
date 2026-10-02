@@ -1,0 +1,474 @@
+import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Link } from "react-router-dom";
+import {
+  ArrowDown,
+  ArrowUp,
+  CircleDollarSign,
+  Clock3,
+  Cpu,
+  Gauge,
+  HardDrive,
+  MemoryStick,
+  Unplug,
+} from "lucide-react";
+import { clsx } from "clsx";
+import { Flag } from "@/components/ui/Flag";
+import { OsLogo } from "@/components/ui/OsLogo";
+import { IpStackBadges } from "./IpStackBadges";
+import { HealthBucketTooltip } from "./HealthBucketTooltip";
+import { resolveTouchBucketIndex, TOUCH_BUCKET_HOLD_MS } from "./touchBucketPick";
+import { useNodeCardModel } from "@/hooks/useNodeCardModel";
+import { HOMEPAGE_PING_BUCKET_COUNT } from "@/hooks/usePingOverview";
+import { speedRateColor } from "@/utils/metricTone";
+import { supportsFineHover } from "@/utils/mediaQuery";
+import {
+  healthBarSlotModel,
+  joinTagTitle,
+  nodeDetailLinkLabels,
+  pingEmptyLabels,
+} from "./nodeCardShared";
+import { formatHealthBucketTooltip } from "./pingBucketText";
+import { formatBytes, type ByteRateDisplay } from "@/utils/format";
+import type { NodeInfo, NodeMetrics, PingOverviewItem, PingOverviewBucket } from "@/types/cfsm";
+
+// 迷你卡固定为巡检布局，不跟随紧凑卡的可选指标开关；数据仍走共享模型。
+
+
+type MiniNode = NodeInfo & NodeMetrics;
+type MiniTag = { label: string; color: string };
+
+function MiniHeader({
+  node,
+  osName,
+}: {
+  node: MiniNode;
+  osName: string;
+}) {
+  const detailLabels = nodeDetailLinkLabels(node.name, osName);
+  const detailHref = `/server/${encodeURIComponent(node.uuid)}`;
+  return (
+    <header className="mini-node-header">
+      <Flag region={node.region} size={14} />
+      <Link to={detailHref} className="mini-node-title" title={node.name}>
+        {node.name}
+      </Link>
+      <Link
+        to={detailHref}
+        className="mini-node-os"
+        title={detailLabels.title}
+        aria-label={detailLabels.ariaLabel}
+      >
+        <OsLogo value={node.os} size={14} />
+      </Link>
+    </header>
+  );
+}
+
+// 价格保底 chip 排最前；标签放不下时整枚隐藏，完整列表保留在 tooltip。
+function MiniChips({
+  tags,
+  renewalPrice,
+  ipv4,
+  ipv6,
+}: {
+  tags: MiniTag[];
+  renewalPrice: string | null;
+  ipv4?: string | null;
+  ipv6?: string | null;
+}) {
+  if (!renewalPrice && tags.length === 0 && !ipv4 && !ipv6) return null;
+  const tagTitle = joinTagTitle(tags);
+  return (
+    <div className="mini-node-chip-row">
+      {renewalPrice && (
+        <span className="mini-node-price-tag" title={`续费价格 ${renewalPrice}`}>
+          <CircleDollarSign size={11} strokeWidth={2.2} />
+          {renewalPrice}
+        </span>
+      )}
+      <IpStackBadges ipv4={ipv4} ipv6={ipv6} />
+      {tags.length > 0 && (
+        <div className="mini-node-tag-lane" title={tagTitle}>
+          {tags.map((tag, index) => (
+            <span key={`${tag.label}-${index}`} className="mini-node-tag" data-tag={tag.color}>
+              {tag.label}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type MiniMetricStyle = CSSProperties & {
+  "--mini-metric-fill": string;
+  "--mini-metric-color": string;
+};
+
+function MiniMetricBar({
+  icon,
+  label,
+  valueText,
+  unit,
+  fraction,
+  paint,
+}: {
+  icon: ReactNode;
+  label: string;
+  valueText: string;
+  unit?: string;
+  fraction: number;
+  paint: string;
+}) {
+  const clamped = Math.max(0, Math.min(1, fraction));
+  const fullValue = `${valueText}${unit ?? ""}`;
+  const style: MiniMetricStyle = {
+    "--mini-metric-fill": `${clamped * 100}%`,
+    "--mini-metric-color": paint,
+  };
+
+  return (
+    <div className="metric-item">
+      <div className="mini-metric-head">
+        <span className="mini-metric-label">
+          {icon}
+          {label}
+        </span>
+        <span className="mini-metric-value tabular" title={`${label} ${fullValue}`}>
+          <strong>{valueText}</strong>
+          {unit && <small>{unit}</small>}
+        </span>
+      </div>
+      <span className="mini-metric-track" style={style} aria-hidden />
+    </div>
+  );
+}
+
+function MiniVitals({
+  node,
+  loadFraction,
+}: {
+  node: MiniNode;
+  loadFraction: number;
+}) {
+  return (
+    <div className="mini-node-vitals">
+      <MiniMetricBar
+        icon={<Cpu size={12} strokeWidth={2} />}
+        label="CPU"
+        valueText={node.cpuPct.toFixed(node.cpuPct >= 10 ? 0 : 1)}
+        unit="%"
+        fraction={node.cpuPct / 100}
+        paint="var(--progress-cpu)"
+      />
+      <MiniMetricBar
+        icon={<MemoryStick size={12} strokeWidth={2} />}
+        label="内存"
+        valueText={node.ramPct.toFixed(node.ramPct >= 10 ? 0 : 1)}
+        unit="%"
+        fraction={node.ramPct / 100}
+        paint="var(--progress-memory)"
+      />
+      <MiniMetricBar
+        icon={<HardDrive size={12} strokeWidth={2} />}
+        label="磁盘"
+        valueText={node.diskPct.toFixed(node.diskPct >= 10 ? 0 : 1)}
+        unit="%"
+        fraction={node.diskPct / 100}
+        paint="var(--progress-disk)"
+      />
+      <MiniMetricBar
+        icon={<Gauge size={12} strokeWidth={2} />}
+        label="负载"
+        valueText={node.load1.toFixed(2)}
+        fraction={loadFraction}
+        paint="var(--progress-load)"
+      />
+    </div>
+  );
+}
+
+function MiniFlowRow({
+  icon,
+  value,
+  unit,
+  color,
+  title,
+}: {
+  icon: ReactNode;
+  value: string;
+  unit?: string;
+  color?: string;
+  title: string;
+}) {
+  return (
+    <span
+      className="mini-node-flow-row"
+      style={color ? { color } : undefined}
+      title={title}
+      aria-label={`${title} ${value}${unit ?? ""}`}
+    >
+      <span className="mini-node-flow-arrow">{icon}</span>
+      <strong className="tabular">
+        {value}
+        {unit && <small>{unit}</small>}
+      </strong>
+    </span>
+  );
+}
+
+// 左栏集中显示实时速率，右栏集中显示累计流量；每栏均按上行、下行排列。
+function MiniFlow({
+  node,
+  upRate,
+  downRate,
+}: {
+  node: MiniNode;
+  upRate: ByteRateDisplay;
+  downRate: ByteRateDisplay;
+}) {
+  return (
+    <div className="mini-node-flow">
+      <div className="mini-node-flow-group" aria-label="实时网速">
+        <MiniFlowRow
+          icon={<ArrowUp size={12} strokeWidth={2.4} />}
+          value={upRate.value}
+          unit={upRate.unit}
+          color={speedRateColor(upRate.unit)}
+          title="实时上行"
+        />
+        <MiniFlowRow
+          icon={<ArrowDown size={12} strokeWidth={2.4} />}
+          value={downRate.value}
+          unit={downRate.unit}
+          color={speedRateColor(downRate.unit)}
+          title="实时下行"
+        />
+      </div>
+      <div className="mini-node-flow-group" aria-label="月度流量">
+        <MiniFlowRow
+          icon={<ArrowUp size={12} strokeWidth={2.2} />}
+          value={formatBytes((node.trafficUpMonthly !== undefined && node.trafficUpMonthly !== null) ? node.trafficUpMonthly : node.trafficUp)}
+          title="月度上行"
+        />
+        <MiniFlowRow
+          icon={<ArrowDown size={12} strokeWidth={2.2} />}
+          value={formatBytes((node.trafficDownMonthly !== undefined && node.trafficDownMonthly !== null) ? node.trafficDownMonthly : node.trafficDown)}
+          title="月度下行"
+        />
+      </div>
+    </div>
+  );
+}
+
+function MiniHealthBars({
+  buckets,
+  kind,
+}: {
+  buckets: PingOverviewBucket[];
+  kind: "latency" | "loss";
+}) {
+  const width = Math.max(1, buckets.length * 4 - 1);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const touchHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoveredBucket = hoveredIndex == null ? null : (buckets[hoveredIndex] ?? null);
+  const tooltip = hoveredBucket ? formatHealthBucketTooltip(hoveredBucket, kind) : null;
+
+  useEffect(
+    () => () => {
+      if (touchHoldTimerRef.current != null) clearTimeout(touchHoldTimerRef.current);
+    },
+    [],
+  );
+
+  const pickIndex = (clientX: number, rect: DOMRect) =>
+    setHoveredIndex(resolveTouchBucketIndex(clientX, rect, buckets.length));
+
+  /** 触屏：按下就选中，抬手后再留一会儿（口径见 `touchBucketPick`）。 */
+  const handleTouchPick = (clientX: number, rect: DOMRect) => {
+    pickIndex(clientX, rect);
+    if (touchHoldTimerRef.current != null) clearTimeout(touchHoldTimerRef.current);
+    touchHoldTimerRef.current = setTimeout(() => {
+      touchHoldTimerRef.current = null;
+      setHoveredIndex(null);
+    }, TOUCH_BUCKET_HOLD_MS);
+  };
+
+  return (
+    <div className="mini-health-chart-wrap">
+      <svg
+        className="mini-health-bars"
+        viewBox={`0 0 ${width} 16`}
+        preserveAspectRatio="none"
+        aria-hidden
+        onPointerDown={(event) => {
+          if (supportsFineHover(event.pointerType)) return;
+          handleTouchPick(event.clientX, event.currentTarget.getBoundingClientRect());
+        }}
+        onPointerMove={(event) => {
+          if (!supportsFineHover(event.pointerType)) {
+            // 手指按着才跟随；触屏没有悬停，抬着手划过来不该动它。
+            if (event.buttons !== 0) {
+              handleTouchPick(event.clientX, event.currentTarget.getBoundingClientRect());
+            }
+            return;
+          }
+          pickIndex(event.clientX, event.currentTarget.getBoundingClientRect());
+        }}
+        onPointerLeave={() => {
+          // 触屏那份有自己的收尾计时，别被这里抢先清掉。
+          if (touchHoldTimerRef.current != null) return;
+          setHoveredIndex(null);
+        }}
+      >
+        {buckets.map((bucket, index) => {
+          const slot = healthBarSlotModel(bucket, kind);
+          const barHeight = 16 * slot.heightFraction;
+
+          return (
+            <rect
+              key={bucket.index}
+              className="mini-health-bar"
+              x={index * 4}
+              y={16 - barHeight}
+              width="3"
+              height={barHeight}
+              rx="1.25"
+              fill={slot.color}
+              opacity={slot.alpha}
+            />
+          );
+        })}
+      </svg>
+      <HealthBucketTooltip text={tooltip} index={hoveredIndex} count={buckets.length} />
+    </div>
+  );
+}
+
+// 延迟/丢包必显；mini 使用内联 SVG，避免每张卡创建 Canvas 与观察器。
+const MiniHealth = memo(function MiniHealth({
+  ping,
+  pingBuckets,
+  latencyColor,
+  lossColor,
+  hasRealHomepagePingBinding,
+  pingLoading,
+  pingError,
+}: {
+  ping: PingOverviewItem;
+  pingBuckets: PingOverviewBucket[];
+  latencyColor: string;
+  lossColor: string;
+  hasRealHomepagePingBinding: boolean;
+  pingLoading: boolean;
+  pingError: boolean;
+}) {
+  const { text: emptyText } = pingEmptyLabels(
+    hasRealHomepagePingBinding,
+    pingLoading,
+    pingError,
+  );
+  return (
+    <div
+      className="mini-node-health"
+      data-ping-state={ping.loadState ?? "ready"}
+      title={
+        pingError && (ping.lastValue != null || ping.loss != null)
+          ? "首页 Ping 刷新失败，显示上次数据"
+          : undefined
+      }
+    >
+      <div className="mini-node-health-item">
+        <div className="mini-node-health-head">
+          <span className="mini-node-health-label">
+            <Clock3 size={12} strokeWidth={2} />
+            延迟
+          </span>
+          <strong className="mini-node-health-value tabular" style={{ color: latencyColor }}>
+            {ping.lastValue != null ? (
+              <>
+                {Math.round(ping.lastValue)}
+                <small>ms</small>
+              </>
+            ) : (
+              <span className="mini-node-health-empty">{emptyText}</span>
+            )}
+          </strong>
+        </div>
+        <MiniHealthBars kind="latency" buckets={pingBuckets} />
+      </div>
+      <div className="mini-node-health-item">
+        <div className="mini-node-health-head">
+          <span className="mini-node-health-label">
+            <Unplug size={12} strokeWidth={2} />
+            丢包
+          </span>
+          <strong className="mini-node-health-value tabular" style={{ color: lossColor }}>
+            {ping.loss != null ? (
+              <>
+                {ping.loss.toFixed(1)}
+                <small>%</small>
+              </>
+            ) : (
+              <span className="mini-node-health-empty">{emptyText}</span>
+            )}
+          </strong>
+        </div>
+        <MiniHealthBars kind="loss" buckets={pingBuckets} />
+      </div>
+    </div>
+  );
+});
+
+export const MiniNodeCard = memo(function MiniNodeCard({
+  uuid,
+}: {
+  uuid: string;
+}) {
+  const model = useNodeCardModel(uuid, {
+    pingBucketCount: HOMEPAGE_PING_BUCKET_COUNT,
+  });
+
+  if (!model.node) {
+    return <article className="mini-node-card animate-pulse" aria-busy />;
+  }
+
+  const {
+    node,
+    ping,
+    pingBuckets,
+    footerTags,
+    renewalPrice,
+    latencyColor,
+    lossColor,
+    loadFraction,
+    upRate,
+    downRate,
+    hasRealHomepagePingBinding,
+    pingLoading,
+    pingError,
+    isOffline,
+    osName,
+  } = model;
+
+  return (
+    <article className={clsx("mini-node-card", isOffline && "is-offline")}>
+      <MiniHeader
+        node={node}
+        osName={osName}
+      />
+      <MiniChips tags={footerTags} renewalPrice={renewalPrice} ipv4={node.ipv4} ipv6={node.ipv6} />
+      <MiniVitals node={node} loadFraction={loadFraction} />
+      <MiniFlow node={node} upRate={upRate} downRate={downRate} />
+      <MiniHealth
+        ping={ping}
+        pingBuckets={pingBuckets}
+        latencyColor={latencyColor}
+        lossColor={lossColor}
+        hasRealHomepagePingBinding={hasRealHomepagePingBinding}
+        pingLoading={pingLoading}
+        pingError={pingError}
+      />
+    </article>
+  );
+});
