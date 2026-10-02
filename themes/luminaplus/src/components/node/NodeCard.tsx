@@ -29,7 +29,7 @@ import { OsLogo } from "@/components/ui/OsLogo";
 import { MetricBar } from "./MetricBar";
 import { LatencyBars } from "./LatencyBars";
 import { QualityBars } from "./QualityBars";
-import { CanvasStrip, mixSrgbTowardWhite, safeCanvasColor } from "./CanvasStrip";
+import { CanvasStrip, safeCanvasColor } from "./CanvasStrip";
 import {
   joinTagTitle,
   nodeDetailLinkLabels,
@@ -733,34 +733,34 @@ function TrafficStat({
   color: string;
   icon: ReactNode;
 }) {
-  // 按当前速率单位档取热力色:文字/圆点/实时点都随速度量级变色,图标仍用方向色(color)区分上下行。
+  // 按当前速率单位档取热力色:文字随速度量级变色;方向色(color)只留给图标与趋势线,
+  // 于是速率数字是「状态」、线条是「方向」,两种色相语义不再混用。
   const speedColor = speedRateColor(rate.unit);
   return (
     <div className="traffic-stat">
-      <div className="traffic-stat-head">
-        <div className="traffic-stat-label">
-          <span style={{ color }}>{icon}</span>
-          <span>{direction}</span>
-        </div>
-        <span className="traffic-stat-value tabular" style={{ color: speedColor }}>
-          {rate.value}
-          <span className="traffic-stat-unit">{rate.unit}</span>
-        </span>
+      <div className="traffic-stat-label">
+        <span style={{ color }}>{icon}</span>
+        <span>{direction}</span>
       </div>
+      <span className="traffic-stat-value tabular" style={{ color: speedColor }}>
+        {rate.value}
+        <span className="traffic-stat-unit">{rate.unit}</span>
+      </span>
       <div className="traffic-stat-trend" aria-label={live ? (active ? "流量趋势" : "当前空闲") : "离线流量趋势"}>
-        <TrafficDotStrip samples={samples} color={speedColor} redrawKey={redrawKey} />
+        <TrafficSparkStrip samples={samples} color={color} redrawKey={redrawKey} />
       </div>
-      <div className="traffic-stat-foot">
-        <div className="traffic-stat-total-label">
-          <span>{monthly ? "本月" : "累计"}{totalLabel}</span>
-        </div>
-        <span className="tabular">{total}</span>
+      <div className="traffic-stat-total">
+        <span className="traffic-stat-total-label">{monthly ? "本月" : "累计"}{totalLabel}</span>
+        <span className="traffic-stat-total-value tabular">{total}</span>
       </div>
     </div>
   );
 }
 
-function TrafficDotStrip({
+// 趋势 sparkline:样本值按近期最大值归一化成一条平滑折线,末端圆点标记「现在」。
+// 数据与旧圆点条同为 trafficTrend 样本,只是换了一种密度更高的读法。
+// 全部样本为零时画一条低透明度基线(仍提示「通道在、只是空闲」),空样本则不画。
+function TrafficSparkStrip({
   samples,
   color,
   redrawKey,
@@ -769,45 +769,56 @@ function TrafficDotStrip({
   color: string;
   redrawKey: string;
 }) {
-  // 除非 traffic samples(缓存的 store 快照)或 color 变了,否则保持稳定,
-  // 这样 canvas 只在趋势真的变动时才重绘。
+  // 与旧圆点条同理:samples(缓存的 store 快照)与 color 不变则 draw 引用稳定,
+  // canvas 只在趋势真的变动时才重绘。
   const draw = useCallback(
     (ctx: CanvasRenderingContext2D, width: number, height: number) => {
       if (samples.length === 0) return;
-      const slotWidth = width / samples.length;
-      // 一次性归一化:safeCanvasColor 解析 var() 并把 hsl() 转成 rgb(),所以
-      // baseColor/inactiveColor 对 canvas 安全,mixSrgbTowardWhite 的 hex 输出也是 ——
-      // 下面循环里不需要再逐点归一化颜色。
       const baseColor = safeCanvasColor(color);
       const inactiveColor = safeCanvasColor("var(--progress-bg)");
+      const maxValue = samples.reduce((max, sample) => Math.max(max, sample.value), 0);
+      const hasTraffic = maxValue > 0;
 
-      samples.forEach((sample, index) => {
-        const hasTraffic = sample.value > 0;
-        const scale = hasTraffic ? 0.72 + sample.level * 0.82 : 0.46;
-        const radius = 2 * scale;
-        // 用 JS 做 sRGB 混色(不用 canvas 的 color-mix() 字符串,老 WebKit 不认)。
-        const tone = hasTraffic
-          ? mixSrgbTowardWhite(baseColor, (68 + sample.level * 20) / 100)
-          : inactiveColor;
-        const x = index * slotWidth + slotWidth / 2;
-        const y = height / 2;
+      // 上下各留 2.5px,1.5px 线宽加末端圆点都不会被裁掉。
+      const padY = 2.5;
+      const usable = height - padY * 2;
+      const slotWidth = samples.length > 1 ? width / (samples.length - 1) : 0;
+      const points = samples.map((sample, index) => ({
+        x: samples.length > 1 ? index * slotWidth : width / 2,
+        y: height - padY - (hasTraffic ? sample.value / maxValue : 0) * usable,
+      }));
 
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = tone;
-        ctx.globalAlpha = hasTraffic ? Math.min(1, sample.opacity + 0.05) : 0.46;
-        ctx.fill();
-      });
+      ctx.strokeStyle = hasTraffic ? baseColor : inactiveColor;
+      ctx.lineWidth = 1.5;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.globalAlpha = hasTraffic ? 0.9 : 0.5;
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      // 中点二次曲线平滑:每段以相邻两点的中点为终点、当前点为控制点,折线立刻
+      // 变成圆润的 sparkline,且不需要引入任何样条库。
+      for (let i = 1; i < points.length - 1; i += 1) {
+        const midX = (points[i].x + points[i + 1].x) / 2;
+        const midY = (points[i].y + points[i + 1].y) / 2;
+        ctx.quadraticCurveTo(points[i].x, points[i].y, midX, midY);
+      }
+      const last = points[points.length - 1];
+      ctx.lineTo(last.x, last.y);
+      ctx.stroke();
 
       ctx.globalAlpha = 1;
+      ctx.fillStyle = hasTraffic ? baseColor : inactiveColor;
+      ctx.beginPath();
+      ctx.arc(last.x, last.y, 2, 0, Math.PI * 2);
+      ctx.fill();
     },
     [samples, color],
   );
 
   return (
     <CanvasStrip
-      className="traffic-dot-strip"
-      height={10}
+      className="traffic-spark-strip"
+      height={18}
       redrawKey={redrawKey}
       draw={draw}
     />

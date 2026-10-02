@@ -222,20 +222,22 @@
 }
 
 .server-traffic-section {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 22px;
-}
-
-.traffic-stat {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 10px;
   min-width: 0;
 }
 
-.traffic-stat-head,
-.traffic-stat-foot,
+/* 单行式流量行:方向标签 | 速率读数 | 趋势 sparkline | 月累计,四列对齐;
+   上下两行共用同一组固定列宽,读数与趋势线天然对直。 */
+.traffic-stat {
+  display: grid;
+  grid-template-columns: 52px 92px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
 .server-health-head,
 .server-card-meta {
   display: flex;
@@ -259,24 +261,22 @@
 
 .traffic-stat-value {
   flex: 0 0 auto;
-  font-size: 20px;
+  justify-self: end;
+  font-size: 19px;
   font-weight: 700;
   letter-spacing: -0.03em;
+  white-space: nowrap;
 }
 
 .traffic-stat-trend {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   min-width: 0;
 }
 
-.traffic-dot-strip {
+.traffic-spark-strip {
   display: block;
-  flex: 1 1 auto;
   width: 100%;
   min-width: 0;
-  height: 10px;
+  height: 18px;
 }
 
 .traffic-stat-live {
@@ -334,16 +334,27 @@
   letter-spacing: 0.01em;
 }
 
-.traffic-stat-foot {
-  color: var(--text-secondary);
-  font-size: 12px;
+/* 月累计:右端上下两行(标签弱化 + 读数),与左侧速率形成「实时 vs 累计」的对位。 */
+.traffic-stat-total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  min-width: 0;
 }
 
 .traffic-stat-total-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 560;
+  white-space: nowrap;
+}
+
+.traffic-stat-total-value {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* 流量配额:label + 剩余在左、used/limit 在右,单行;下方为 18 个 .traffic-quota-segment
@@ -924,7 +935,6 @@
     font-size: 15px;
   }
 
-  .server-traffic-section,
   .server-health-grid,
   .server-card-meta-grid {
     grid-template-columns: 1fr;
@@ -933,12 +943,9 @@
 }
 
 
-/* Network summary: one shared live label, two aligned direction columns. */
-.server-traffic-section {
-  gap: 10px 20px;
-}
+/* Network summary: one shared live label, then one row per direction
+   (label | rate | sparkline | monthly total). */
 .traffic-section-heading {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -946,36 +953,10 @@
   font-size: 11px;
   font-weight: 600;
 }
-.traffic-stat {
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--hairline);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-elev) 42%, transparent);
-}
-.traffic-stat-head {
-  flex-wrap: wrap;
-  gap: 6px;
-}
 .traffic-stat-value {
-  margin-left: auto;
-  font-size: clamp(18px, 2vw, 22px);
+  font-size: clamp(17px, 2vw, 20px);
   line-height: 1.2;
-  white-space: nowrap;
-}
-.traffic-stat-trend {
-  opacity: 0.75;
-}
-.traffic-stat-foot {
-  gap: 6px;
-  font-size: 11px;
-}
-.traffic-stat-foot > .tabular {
-  color: var(--text-primary);
-  font-weight: 600;
-  white-space: nowrap;
 }
 @media (max-width: 420px) {
-  .server-traffic-section { column-gap: 10px; }
-  .traffic-stat { padding: 10px 8px; }
+  .traffic-stat { grid-template-columns: 46px 78px minmax(0, 1fr) auto; gap: 8px; }
 }
