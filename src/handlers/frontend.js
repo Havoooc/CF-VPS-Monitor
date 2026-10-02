@@ -502,6 +502,10 @@ export async function serveFrontend(request, env, settings = null) {
     settings = await loadSettings(env.DB);
   }
 
+  if (path.startsWith('/static/') || path.startsWith('/flags/') || path.startsWith('/os-icons/')) {
+    return env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not Found', { status: 404 });
+  }
+
   if (path === '/themes/luminaplus' || path === '/themes/luminaplus/') {
     return Response.redirect(new URL('/themes/luminaplus/index.html', url.origin).toString(), 302);
   }
@@ -516,11 +520,11 @@ export async function serveFrontend(request, env, settings = null) {
   }
 
   if ((request.method === 'GET' || request.method === 'HEAD') && path.startsWith('/assets/')) {
-    if (isBundledLuminaUrl(settings.theme_url) && env.ASSETS) {
+    const resolvedTheme = resolveThemeUrlForAsset(request, settings);
+    if (!resolvedTheme.preview && isBundledLuminaUrl(settings.theme_url) && env.ASSETS) {
       const bundledUrl = new URL(`/themes/luminaplus${path}`, url.origin);
       return env.ASSETS.fetch(new Request(bundledUrl, request));
     }
-    const resolvedTheme = resolveThemeUrlForAsset(request, settings);
     if (!resolvedTheme.themeUrl) {
       return new Response('Not Found', {
         status: 404,

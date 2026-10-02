@@ -101,7 +101,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: {
-      outDir: "../../public/themes/luminaplus",
+      outDir: process.env.GITHUB_PAGES === "1" ? "dist" : "../../public/themes/luminaplus",
       emptyOutDir: true,
       // 与 CSS 实际基线对齐:全站大量 color-mix()/oklch(需 Chrome 111 / Safari 16.2+),
       // JS 没必要为更老的引擎转译。

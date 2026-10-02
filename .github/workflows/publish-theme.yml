@@ -20,14 +20,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: themes/luminaplus/package-lock.json
       - run: npm ci --prefix themes/luminaplus
+      - run: npm test --prefix themes/luminaplus
       - run: npm run build --prefix themes/luminaplus
-      - name: Publish immutable theme source branch
+      - name: Publish theme catalog branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -36,7 +39,8 @@ jobs:
           export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
           export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
           remote="https://github.com/${GITHUB_REPOSITORY}.git"
-          if git ls-remote --heads "$remote" refs/heads/theme-dist | grep -q .; then
+          branch_ref="$(git ls-remote --heads "$remote" refs/heads/theme-dist)"
+          if [ -n "$branch_ref" ]; then
             git clone -q --branch theme-dist --single-branch "$remote" "$RUNNER_TEMP/theme-dist"
           else
             git init -q -b theme-dist "$RUNNER_TEMP/theme-dist"
@@ -44,6 +48,7 @@ jobs:
           fi
           find "$RUNNER_TEMP/theme-dist" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
           cp -R public/themes/luminaplus/. "$RUNNER_TEMP/theme-dist/"
+          node -e 'const fs=require("fs"); const version=require("./themes/luminaplus/package.json").version; fs.writeFileSync(process.env.RUNNER_TEMP+"/theme-dist/release.json", JSON.stringify({version,revision:process.env.GITHUB_SHA}));'
           cd "$RUNNER_TEMP/theme-dist"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

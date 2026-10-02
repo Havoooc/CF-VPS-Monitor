@@ -6,7 +6,7 @@ import { fetchWithTimeout } from "@/utils/abort";
  * - 后端：`/api/config` 的 `version`；最新版 `last_workers_version` **只在登录后下发**
  *   （后端文档：自定义主题不要依赖匿名请求展示升级提示），所以提醒只给登录站长看。
  * - 主题：当前版本读页面里的 `<meta name="theme-version">`（构建时写入）；最新版读自有仓库 main 中
- *   themes/luminaplus/package.json 的版本号。走 raw.githubusercontent.com，
+ *   theme-dist/release.json 中已发布的版本号。走 raw.githubusercontent.com，
  *   只在登录后查，结果在本机缓存 12 小时（失败 1 小时），访客不会多出任何第三方请求。
  */
 

@@ -34,4 +34,13 @@ if (fs.existsSync(indexHtmlPath)) {
   console.log('Renamed index.html → dashboard.html');
 }
 
+// Identify the exact source deployed with both frontend entry points.
+const revision = process.env.GITHUB_SHA || execSync('git rev-parse HEAD', { cwd: rootDir, encoding: 'utf8' }).trim();
+const release = { revision, builtAt: new Date().toISOString() };
+fs.writeJsonSync(path.join(distDir, 'release.json'), release);
+for (const entry of ['dashboard.html', 'themes/luminaplus/index.html']) {
+  const file = path.join(distDir, entry);
+  const html = fs.readFileSync(file, 'utf8');
+  fs.writeFileSync(file, html.replace('</head>', `<meta name="deployment-revision" content="${revision}">\n</head>`));
+}
 console.log('Build complete!');

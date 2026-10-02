@@ -41,7 +41,7 @@ describe("theme version parsing", () => {
 
 describe("fetchLatestThemeVersion", () => {
   it("asks GitHub once, then serves the answer from the local cache for 12 hours", async () => {
-    const fetchMock = vi.fn(async () => reply(RELEASE_HTML));
+    const fetchMock = vi.fn(async () => reply(JSON.stringify({ version: "1.2.16" })));
     vi.stubGlobal("fetch", fetchMock);
 
     const first = await loadModule();
@@ -57,7 +57,7 @@ describe("fetchLatestThemeVersion", () => {
   });
 
   it("backs off for an hour after a failure and keeps the last known version meanwhile", async () => {
-    const fetchMock = vi.fn(async () => reply(RELEASE_HTML));
+    const fetchMock = vi.fn(async () => reply(JSON.stringify({ version: "1.2.16" })));
     vi.stubGlobal("fetch", fetchMock);
     const module = await loadModule();
     await module.fetchLatestThemeVersion(NOW);
