@@ -1,4 +1,6 @@
-import { initDatabase, weeklyCleanup, getMetricsHistory, clearHistory } from './database/schema.js';
+import { encryptTurnstileData, isTurnstileVerified } from './middleware/turnstile.js';
+import { fetchHistoryData } from './handlers/history.js';
+import { initDatabase, weeklyCleanup, clearHistory } from './database/schema.js';
 import { checkOfflineNodes, checkExpiringServers, checkResourceAlerts } from './services/notification.js';
 import { updateDatabase } from './database/updateDatabase.js';
 import { handleAdminAPI } from './handlers/admin.js';
@@ -8,10 +10,8 @@ import { handleServerAPI, handleServersAPI } from './handlers/dashboard.js';
 import { handleTheme } from './handlers/theme.js';
 import { handleGithubOAuthCallback, handleGithubOAuthStartApi, isGithubOAuthReady } from './handlers/githubAuth.js';
 import { isValidThemeOptions, loadSettings, loadSiteSettings, loadAppearanceOptions, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, saveThemeOptions, setDebug, debug } from './utils/settings.js';
-import { omitNullLossProbeFields } from './handlers/dashboard.js';
 import { checkAuth, simpleAuthResponse } from './middleware/auth.js';
-import { getServerDetail, getMetricsHistoryCache, setMetricsHistoryCache, getCacheDuration } from './utils/cache.js';
-import { AppError, createSuccessResponse, createUnauthorizedResponse, createBadRequestResponse, createNotFoundResponse, createErrorResponse } from './utils/errors.js';
+import { AppError, createSuccessResponse, createBadRequestResponse, createNotFoundResponse, createErrorResponse } from './utils/errors.js';
 import { verifyTurnstileToken } from './utils/common.js';
 import { getCorsAllowedOrigins, createOptionsResponse, applyCors } from './utils/cors.js';
 import { getRemoteVersion } from './utils/version.js';
@@ -38,148 +38,6 @@ function cleanThemeAssetResponse(response) {
     statusText: response.statusText,
     headers
   });
-}
-
-async function getEncryptionKey(env, sys) {
-  let secret = (sys && sys.jwt_secret) || env.TURNSTILE_SECRET_KEY || env.API_SECRET || 'default_secret_key_for_turnstile_encryption';
-  secret += '_turnstile';
-  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    new Uint8Array(hash).slice(0, 32),
-    { name: 'AES-GCM' },
-    false,
-    ['encrypt', 'decrypt']
-  );
-  return keyMaterial;
-}
-
-async function encryptTurnstileData(data, env, sys) {
-  const key = await getEncryptionKey(env, sys);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encoder = new TextEncoder();
-  const encodedData = encoder.encode(JSON.stringify(data));
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv },
-    key,
-    encodedData
-  );
-  const combined = new Uint8Array(iv.length + ciphertext.byteLength);
-  combined.set(iv, 0);
-  combined.set(new Uint8Array(ciphertext), iv.length);
-  return btoa(String.fromCharCode(...combined));
-}
-
-async function decryptTurnstileData(encoded, env, sys) {
-  try {
-    const key = await getEncryptionKey(env, sys);
-    const decoded = new Uint8Array(atob(encoded).split('').map(c => c.charCodeAt(0)));
-    const iv = decoded.slice(0, 12);
-    const ciphertext = decoded.slice(12);
-    const decrypted = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: iv },
-      key,
-      ciphertext
-    );
-    const encoder = new TextDecoder();
-    return JSON.parse(encoder.decode(decrypted));
-  } catch (e) {
-    debug('Cookie decryption error:', e);
-    return null;
-  }
-}
-
-async function isTurnstileVerified(request, env, sys) {
-  const verifiedHeader = request.headers.get('X-Turnstile-Verified');
-  
-  if (!verifiedHeader) return false;
-  
-  try {
-    const decrypted = await decryptTurnstileData(verifiedHeader, env, sys);
-    return decrypted && decrypted.expires && Date.now() < decrypted.expires * 1000;
-  } catch {
-    return false;
-  }
-}
-
-async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
-  if (!id) return createBadRequestResponse('Missing ID');
-
-  const ALLOWED_HOURS = [0.167, 0.5, 1, 6, 12, 24, 48, 96, 168];
-  if (!ALLOWED_HOURS.includes(hours)) {
-    return createBadRequestResponse('Invalid hours parameter');
-  }
-  
-  if (!sys) {
-    sys = await loadSiteSettings(env.DB);
-  }
-  const isLoggedIn = await checkAuth(request, env, sys);
-  
-  if (sys.is_public !== 'true' && !isLoggedIn) {
-    return simpleAuthResponse();
-  }
-  
-  if (hours > 24 && !isLoggedIn) {
-    return createUnauthorizedResponse();
-  }
-  
-  const server = await getServerDetail(env.DB, id, isLoggedIn);
-  if (!server) return createNotFoundResponse();
-  
-  // 最多查询7天数据
-  const clampedHours = Math.min(hours, 168);
-  const cacheDuration = getCacheDuration(clampedHours);
-  const longHistoryPoints = clampedHours > 1
-    ? Number(normalizeLongHistoryPoints(sys.long_history_points))
-    : null;
-
-  const cached = getMetricsHistoryCache(id, clampedHours, columns, longHistoryPoints);
-  if (cached && Date.now() - cached.timestamp < cacheDuration) {
-    const cachedData = Array.isArray(cached.data)
-      ? cached.data.map(omitNullLossProbeFields)
-      : cached.data;
-    return createSuccessResponse(cachedData, { 'X-Cache': 'HIT' });
-  }
-  
-  let data;
-  try {
-    data = await getMetricsHistory(
-      env.DB,
-      id,
-      clampedHours,
-      columns,
-      server,
-      longHistoryPoints
-    );
-  } catch (e) {
-    const message = e && e.message ? e.message : String(e);
-    if (/invalid history partition id/i.test(message)) {
-      debug('[History] 服务器未分配历史分区，无法按主键范围查询:', message);
-      return new Response(JSON.stringify({
-        message: 'historyPartitionNotAssigned'
-      }), {
-        status: 409,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-    if (/no such column/i.test(message)) {
-      debug('[History] 数据库字段缺失，可能尚未升级数据库:', message);
-      return new Response(JSON.stringify({
-        message: 'databaseUpgradeRequired'
-      }), {
-        status: 409,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-    throw e;
-  }
-  
-  const sanitizedData = Array.isArray(data)
-    ? data.map(omitNullLossProbeFields)
-    : data;
-  setMetricsHistoryCache(id, clampedHours, columns, sanitizedData, longHistoryPoints);
-  
-  return createSuccessResponse(sanitizedData, { 'X-Cache': 'MISS' });
 }
 
 export default {
@@ -462,23 +320,6 @@ export default {
         // WebSocket 升级响应直接原样返回，不能修改 response 对象
         if (response.status === 101) {
           return response;
-        }
-
-        if (setTurnstileVerified) {
-          const expires = Math.floor(Date.now() / 1000) + 3600;
-          const cookieData = { expires, verified: true, timestamp: Date.now() };
-          const encryptedData = await encryptTurnstileData(cookieData, env, sys);
-
-          const finalHeaders = new Headers(response.headers);
-          finalHeaders.set('Access-Control-Allow-Origin', request.headers.get('Origin') || '');
-          finalHeaders.set('Access-Control-Allow-Credentials', 'true');
-          finalHeaders.set('Vary', 'Origin');
-
-          return new Response(response.body, {
-            status: response.status,
-            statusText: response.statusText,
-            headers: finalHeaders
-          });
         }
 
         return applyCors(response, request, corsAllowedOrigins);

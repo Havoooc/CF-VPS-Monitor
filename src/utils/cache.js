@@ -8,6 +8,8 @@
  * - 站点设置缓存
  */
 
+import { BoundedCache } from './boundedCache.js';
+
 import { clearAppearanceSettingsCache, clearSiteSettingsCache, debug } from './settings.js';
 
 const SERVERS_LIST_TTL = 120 * 1000;
@@ -17,9 +19,9 @@ const LATEST_ALL_TTL = 30 * 1000;
 let latestAllCache = null;
 let latestAllCacheTime = 0;
 
-const metricsHistoryCache = new Map();
+const metricsHistoryCache = new BoundedCache(128);
 
-const serverDetailCache = new Map();
+const serverDetailCache = new BoundedCache(512);
 
 export function getCacheDuration(hours) {
   if (hours >= 48) {
@@ -40,9 +42,9 @@ export function getCacheDuration(hours) {
 function filterServersByHidden(servers, includeHidden) {
   if (!servers || servers.length === 0) return [];
   if (includeHidden) {
-    return [...servers];
+    return servers.map(server => ({ ...server }));
   }
-  return servers.filter(s => s.is_hidden !== 1 && s.is_hidden !== '1');
+  return servers.filter(s => s.is_hidden !== 1 && s.is_hidden !== '1').map(server => ({ ...server }));
 }
 
 export async function getAllServers(db, includeHidden = true) {
@@ -105,7 +107,7 @@ export async function getServerDetail(db, id, includeHidden = false) {
   
   const server = await db.prepare('SELECT * FROM servers WHERE id = ?').bind(id).first();
 
-  serverDetailCache.set(id, { data: server, time: now });
+  serverDetailCache.set(id, { data: server, time: now }, SERVERS_LIST_TTL);
   debug('服务器详情缓存更新');
   
   if (!server) {
@@ -155,7 +157,7 @@ export function getMetricsHistoryCache(serverId, hours, columns, samplePoints = 
 
 export function setMetricsHistoryCache(serverId, hours, columns, data, samplePoints = null) {
   const key = getCacheKey(serverId, hours, columns, samplePoints);
-  metricsHistoryCache.set(key, { data, timestamp: Date.now() });
+  metricsHistoryCache.set(key, { data, timestamp: Date.now() }, getCacheDuration(hours));
 }
 
 export function clearMetricsHistoryCache(serverId) {

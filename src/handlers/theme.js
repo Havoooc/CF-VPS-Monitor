@@ -28,11 +28,14 @@ export async function handleTheme() {
 
   try {
     const res = await fetch(THEME_STORE_URL, {
-      headers: { 'User-Agent': 'CF-VPS-Monitor-Theme-Store' }
+      headers: { 'User-Agent': 'CF-VPS-Monitor-Theme-Store' },
+      signal: AbortSignal.timeout(5000)
     })
 
     if (!res.ok) {
-      return { ok: false, status: res.status, error: 'themeStoreProxyFailed' }
+      return cachedThemeStore
+        ? { ok: true, themeStore: cachedThemeStore, cached: true, stale: true }
+        : { ok: false, status: res.status, error: 'themeStoreProxyFailed' }
     }
 
     const data = await res.json()
@@ -42,6 +45,8 @@ export async function handleTheme() {
     cacheTime = now
     return { ok: true, themeStore, cached: false }
   } catch (e) {
-    return { ok: false, status: 0, error: 'themeStoreProxyFailed' }
+    return cachedThemeStore
+      ? { ok: true, themeStore: cachedThemeStore, cached: true, stale: true }
+      : { ok: false, status: 0, error: 'themeStoreProxyFailed' }
   }
 }

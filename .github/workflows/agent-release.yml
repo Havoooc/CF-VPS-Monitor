@@ -16,6 +16,9 @@ jobs:
         with:
           go-version-file: agent/go.mod
           cache-dependency-path: agent/go.sum
+      - name: Test cf-probe
+        working-directory: agent
+        run: go test ./...
       - name: Build release binaries
         working-directory: agent
         env:

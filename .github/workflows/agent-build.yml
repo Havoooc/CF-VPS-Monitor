@@ -20,6 +20,9 @@ jobs:
         with:
           go-version-file: agent/go.mod
           cache-dependency-path: agent/go.sum
+      - name: Test cf-probe
+        working-directory: agent
+        run: go test ./...
       - name: Compile cf-probe
         working-directory: agent
         run: go build -trimpath -o "$RUNNER_TEMP/cf-probe" ./cmd/cf-probe
