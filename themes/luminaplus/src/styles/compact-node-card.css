@@ -10,8 +10,8 @@
   display: flex;
   min-height: 0;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
+  gap: 12px;
+  padding: 16px;
   color: var(--text-primary);
   transition:
     border-color 160ms ease,
@@ -91,7 +91,36 @@
 
 .compact-node-actions {
   flex: 0 0 auto;
-  gap: 7px;
+  gap: 8px;
+}
+
+.compact-node-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--status-online) 34%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--status-online) 10%, transparent);
+  color: var(--status-online);
+  font-size: 10px;
+  font-weight: 720;
+  line-height: 1;
+}
+
+.compact-node-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 13%, transparent);
+}
+
+.compact-node-status[data-offline="true"] {
+  border-color: color-mix(in srgb, var(--status-offline) 36%, transparent);
+  background: color-mix(in srgb, var(--status-offline) 10%, transparent);
+  color: var(--status-offline);
 }
 
 .compact-node-detail-link {
@@ -168,16 +197,52 @@
 .compact-node-vitals {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 16px;
-  border-top: 1px solid color-mix(in srgb, var(--hairline) 88%, transparent);
-  padding-top: 10px;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--fill-tertiary) 40%, transparent);
 }
 
 .compact-node-gauge {
   min-width: 0;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 76px;
+  padding: 10px;
+}
+
+.compact-node-gauge:nth-child(odd) {
+  border-right: 1px solid var(--border-subtle);
+}
+
+.compact-node-gauge:nth-child(-n + 2) {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.compact-node-gauge-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--compact-gauge-color) 16%, var(--border-subtle));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--compact-gauge-color) 12%, var(--fill-tertiary));
+  color: var(--compact-gauge-color);
+}
+
+.compact-node-gauge-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.compact-node-gauge-content {
   display: flex;
+  min-width: 0;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
 }
 
 .compact-node-gauge-head,
@@ -201,6 +266,17 @@
 .compact-node-gauge-label svg {
   color: var(--compact-gauge-color);
   flex: 0 0 auto;
+}
+
+.compact-node-gauge-detail {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 550;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .compact-node-gauge strong {
@@ -258,19 +334,41 @@
 }
 
 .compact-node-info-strip {
-  /* 单行信息条。随着小块数量增加(实时速率 / 累计流量 / 费用到期 / 连接数 全开时最多 4 个),
-     每列变窄,于是我们不换行,而是按比例收缩每个小块的内部尺寸——像 "7.46 Kbps" / "¥19.90"
-     这样的值能保持单行而非省略号截断。--ci-shrink 在 1–2 个小块时为 0(不变),每多一列加 1
-     (3 → 1,4 → 2),供后面的 calc() 尺寸使用。 */
-  --ci-shrink: max(0, var(--compact-info-columns, 3) - 2);
+  /* 固定采用两列，避免实时数据、流量与账单挤成窄条。 */
+  --ci-shrink: 0;
   display: grid;
-  grid-template-columns: repeat(var(--compact-info-columns, 3), minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0;
   overflow: hidden;
   border: 1px solid var(--border-subtle);
-  border-radius: 10px;
+  border-radius: 13px;
   background: color-mix(in srgb, var(--fill-tertiary) 72%, transparent);
-  padding-top: 0;
+}
+
+.compact-node-info-tile:nth-child(odd) {
+  border-right: 1px solid var(--border-subtle);
+}
+
+.compact-node-info-tile:nth-child(-n + 2) {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.compact-node-info-tile:only-child {
+  grid-column: 1 / -1;
+}
+
+.compact-node-info-heading {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 680;
+  line-height: 1.15;
+}
+
+.compact-node-info-heading svg {
+  flex: 0 0 auto;
 }
 
 /* 必显的流量配额条。复用 .compact-node-gauge-track(由该容器上设置的 --compact-gauge-*
@@ -279,8 +377,10 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  border-top: 1px solid color-mix(in srgb, var(--hairline) 88%, transparent);
-  padding-top: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fill-tertiary) 38%, transparent);
 }
 
 .compact-node-traffic-body {
@@ -496,6 +596,47 @@
   padding-top: 10px;
 }
 
+.compact-node-network {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--fill-tertiary) 38%, transparent);
+}
+
+.compact-node-network .compact-ping-panel {
+  padding: 12px;
+}
+
+.compact-node-network .return-route-summary {
+  margin: 0;
+  padding: 11px 12px 12px;
+  border-top: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--fill-tertiary) 24%, transparent);
+}
+
+.compact-node-network .return-route-summary-grid {
+  gap: 6px;
+}
+
+.compact-node-network .return-route-summary-item {
+  min-height: 40px;
+  align-items: flex-start;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 8px;
+  border-color: color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  background: color-mix(in srgb, var(--surface-a) 66%, transparent);
+}
+
+.compact-node-network .return-route-summary-badge {
+  max-width: 100%;
+}
+
 .compact-node-health-item {
   min-width: 0;
   display: flex;
@@ -657,13 +798,9 @@
     gap: 4px;
   }
 
-  .compact-node-info-strip {
-    gap: 5px;
-  }
-
   .compact-node-info-tile {
-    min-height: 48px;
-    padding: 6px;
+    min-height: 58px;
+    padding: 8px;
   }
 
   .compact-node-info-row {
@@ -696,22 +833,54 @@
   }
 
   .compact-node-vitals {
-    gap: 10px;
-    margin-top: 8px;
+    gap: 0;
+    margin-top: 0;
+  }
+
+  .compact-node-gauge {
+    grid-template-columns: 30px minmax(0, 1fr);
+    min-height: 70px;
+    gap: 7px;
+    padding: 8px;
+  }
+
+  .compact-node-gauge-icon {
+    width: 30px;
+    height: 30px;
   }
 
   .compact-node-info-strip {
-    margin-top: 8px;
-    gap: 6px;
+    margin-top: 0;
   }
 
   .compact-node-info-tile {
-    min-height: 46px;
-    padding: 6px 7px;
+    min-height: 58px;
+    padding: 8px;
   }
 
-  .compact-node-health {
-    margin-top: 8px;
+  .compact-node-network .compact-ping-panel {
+    padding: 10px;
+  }
+
+  .compact-node-network .return-route-summary {
+    padding: 10px;
+  }
+
+  .compact-node-network .return-route-summary-grid {
+    gap: 5px;
+  }
+
+  .compact-node-network .return-route-summary-item {
+    padding: 5px 6px;
+  }
+
+  .compact-node-status {
+    padding-inline: 8px;
+  }
+
+  .compact-node-status i {
+    width: 6px;
+    height: 6px;
   }
 }
 .server-card,

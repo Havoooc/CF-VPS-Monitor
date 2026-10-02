@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowDown,
+  ArrowDownUp,
   ArrowUp,
   Calendar,
   CircleDollarSign,
@@ -88,24 +89,27 @@ function CompactGauge({
       style={style}
       title={detail ? `${label} ${value} · ${detail}` : `${label} ${value}`}
     >
-      <div className="compact-node-gauge-head">
-        <span className="compact-node-gauge-label">
-          {icon}
-          <span>{label}</span>
-        </span>
-        <strong className="tabular">{value}</strong>
+      <span className="compact-node-gauge-icon" aria-hidden="true">{icon}</span>
+      <div className="compact-node-gauge-content">
+        <div className="compact-node-gauge-head">
+          <span className="compact-node-gauge-label">{label}</span>
+          <strong className="tabular">{value}</strong>
+        </div>
+        <span className="compact-node-gauge-detail">{detail || " "}</span>
+        <div className="compact-node-gauge-track" aria-hidden />
       </div>
-      <div className="compact-node-gauge-track" aria-hidden />
     </div>
   );
 }
 
 function CompactInfoTile({
   label,
+  icon,
   color,
   children,
 }: {
   label: string;
+  icon: ReactNode;
   color: string;
   children: ReactNode;
 }) {
@@ -117,6 +121,10 @@ function CompactInfoTile({
       style={style}
       aria-label={label}
     >
+      <span className="compact-node-info-heading" style={{ color }}>
+        {icon}
+        <span>{label}</span>
+      </span>
       <span className="compact-node-info-content">{children}</span>
     </div>
   );
@@ -348,9 +356,11 @@ function CompactHealthItem({
 function CompactNodeHeader({
   node,
   osName,
+  isOffline,
 }: {
   node: CompactNode;
   osName: string;
+  isOffline: boolean;
 }) {
   const detailLabels = nodeDetailLinkLabels(node.name, osName);
   return (
@@ -368,6 +378,10 @@ function CompactNodeHeader({
         </div>
       </div>
       <div className="compact-node-actions">
+        <span className="compact-node-status" data-offline={isOffline ? "true" : "false"}>
+          <i aria-hidden="true" />
+          {isOffline ? "离线" : "在线"}
+        </span>
         <Link
           to={`/server/${encodeURIComponent(node.uuid)}`}
           className="compact-node-detail-link"
@@ -489,16 +503,11 @@ function CompactNodeInfoStrip({
   expireColor: string;
   renewalPrice: string | null;
 }) {
-  const infoTileCount =
-    1 + (showTrafficTotal ? 1 : 0) + (showBilling ? 1 : 0) + (showConnections ? 1 : 0);
-
   return (
-    <div
-      className="compact-node-info-strip"
-      style={{ "--compact-info-columns": infoTileCount } as CSSProperties}
-    >
+    <div className="compact-node-info-strip">
       <CompactInfoTile
         label="实时速率"
+        icon={<ArrowDownUp size={13} strokeWidth={2.2} />}
         color="var(--progress-cpu)"
       >
         <CompactInfoRow
@@ -518,6 +527,7 @@ function CompactNodeInfoStrip({
       {showTrafficTotal && (
         <CompactInfoTile
           label="月度流量"
+          icon={<Database size={13} strokeWidth={2.1} />}
           color="var(--text-primary)"
         >
           <CompactInfoRow
@@ -545,6 +555,7 @@ function CompactNodeInfoStrip({
       {showBilling && (
         <CompactInfoTile
           label="费用到期"
+          icon={<Calendar size={13} strokeWidth={2.1} />}
           color="var(--status-success)"
         >
           <CompactInfoRow
@@ -561,7 +572,7 @@ function CompactNodeInfoStrip({
         </CompactInfoTile>
       )}
       {showConnections && (
-        <CompactInfoTile label="连接数" color="var(--progress-network)">
+        <CompactInfoTile label="连接数" icon={<Network size={13} strokeWidth={2.1} />} color="var(--progress-network)">
           <CompactInfoRow
             icon={<Network size={12} strokeWidth={2.1} />}
             label="TCP"
@@ -610,7 +621,7 @@ function CompactTrafficBar({
           <>
             <span className="compact-node-traffic-label">
               <Database size={12} strokeWidth={2.1} />
-              <span>流量</span>
+              <span>流量配额</span>
             </span>
             <div className="compact-node-gauge-track" aria-hidden />
             <span className="compact-node-traffic-uptime">{uptimeLabel}</span>
@@ -621,7 +632,7 @@ function CompactTrafficBar({
             <div className="compact-node-traffic-head">
               <span className="compact-node-traffic-label">
                 <Database size={12} strokeWidth={2.1} />
-                <span>流量</span>
+                <span>流量配额</span>
               </span>
               <span className="compact-node-traffic-value">{traffic.detail}</span>
             </div>
@@ -741,6 +752,7 @@ export const CompactNodeCard = memo(function CompactNodeCard({
       <CompactNodeHeader
         node={node}
         osName={osName}
+        isOffline={isOffline}
       />
       <CompactNodeChips subtitle={subtitle} tags={footerTags} ipv4={node.ipv4} ipv6={node.ipv6} />
       <CompactNodeVitals node={node} loadFraction={loadFraction} />
@@ -763,18 +775,24 @@ export const CompactNodeCard = memo(function CompactNodeCard({
           lines={homepagePingLines}
           density="compact"
           returnRoute={node.return_route}
-          className="compact-node-bottom"
+          className="compact-node-network"
         />
       ) : (
-        <CompactNodeHealth
-          ping={ping}
-          pingBuckets={pingBuckets}
-          latencyColor={latencyColor}
-          lossColor={lossColor}
-          hasRealHomepagePingBinding={hasRealHomepagePingBinding}
-          pingLoading={pingLoading}
-          pingError={pingError}
-        />
+        <section className="compact-node-network compact-node-network-single" aria-label="网络质量">
+          <div className="compact-ping-panel-heading">
+            <span>网络质量</span>
+            <span className="compact-ping-legend"><i />延迟 <i />丢包趋势</span>
+          </div>
+          <CompactNodeHealth
+            ping={ping}
+            pingBuckets={pingBuckets}
+            latencyColor={latencyColor}
+            lossColor={lossColor}
+            hasRealHomepagePingBinding={hasRealHomepagePingBinding}
+            pingLoading={pingLoading}
+            pingError={pingError}
+          />
+        </section>
       )}
     </article>
   );
