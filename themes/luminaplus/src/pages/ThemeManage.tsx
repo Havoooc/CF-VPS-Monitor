@@ -1369,13 +1369,6 @@ export function ThemeManage() {
               onPatch={patch}
             />
             <ToggleRow
-              field="compactShowBilling"
-              title="显示费用到期"
-              desc="展示续费价格与剩余天数。"
-              checked={draft.compactShowBilling}
-              onPatch={patch}
-            />
-            <ToggleRow
               field="compactShowUptime"
               title="显示在线时间"
               desc="在小卡片流量栏右侧展示在线时长。默认开启。"

@@ -735,9 +735,10 @@
 
 .compact-ping-summary {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, max-content) max-content max-content;
   align-items: center;
-  column-gap: 10px;
+  justify-content: space-between;
+  column-gap: 8px;
   min-width: 0;
 }
 

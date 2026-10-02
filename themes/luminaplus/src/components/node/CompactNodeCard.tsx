@@ -5,8 +5,6 @@ import {
   ArrowDown,
   ArrowDownUp,
   ArrowUp,
-  Calendar,
-  CircleDollarSign,
   Clock3,
   Cpu,
   Database,
@@ -29,7 +27,6 @@ import { formatHealthBucketTooltip } from "./pingBucketText";
 import { resolveTouchBucketIndex, TOUCH_BUCKET_HOLD_MS } from "./touchBucketPick";
 import { MultiPingStatus } from "./MultiPingStatus";
 import {
-  formatCompactExpire,
   formatCompactPercent,
   formatCompactUptime,
   healthBarSlotModel,
@@ -53,7 +50,6 @@ const TRAFFIC_DOT_COUNT = 16;
 
 type CompactNode = NodeInfo & NodeMetrics;
 type CompactTag = { label: string; color: string };
-type CompactExpire = { value: string; unit: string };
 
 function clamp01(value: number) {
   if (!Number.isFinite(value)) return 0;
@@ -486,22 +482,14 @@ function CompactNodeInfoStrip({
   upRate,
   downRate,
   showTrafficTotal,
-  showBilling,
   showConnections,
-  expire,
-  expireColor,
-  renewalPrice,
 }: {
   node: CompactNode;
   trafficTrend: { up: TrafficTrendSample[]; down: TrafficTrendSample[] };
   upRate: ByteRateDisplay;
   downRate: ByteRateDisplay;
   showTrafficTotal: boolean;
-  showBilling: boolean;
   showConnections: boolean;
-  expire: CompactExpire;
-  expireColor: string;
-  renewalPrice: string | null;
 }) {
   return (
     <div className="compact-node-info-strip">
@@ -549,25 +537,6 @@ function CompactNodeInfoStrip({
               />
             )}
             value={formatBytes((node.trafficDownMonthly !== undefined && node.trafficDownMonthly !== null) ? node.trafficDownMonthly : node.trafficDown)}
-          />
-        </CompactInfoTile>
-      )}
-      {showBilling && (
-        <CompactInfoTile
-          label="费用到期"
-          icon={<Calendar size={13} strokeWidth={2.1} />}
-          color="var(--status-success)"
-        >
-          <CompactInfoRow
-            icon={<Calendar size={12} strokeWidth={2.1} />}
-            value={formatCompactExpire(expire)}
-            color={expireColor}
-          />
-          <CompactInfoRow
-            icon={<CircleDollarSign size={12} strokeWidth={2.2} />}
-            // 后端 price 为空/0/-1 都表示免费，小卡片直接写「免费」而不是留白。
-            value={renewalPrice || "免费"}
-            color={renewalPrice ? "var(--status-success)" : "var(--text-tertiary)"}
           />
         </CompactInfoTile>
       )}
@@ -726,9 +695,6 @@ export const CompactNodeCard = memo(function CompactNodeCard({
     homepagePingLines,
     compactFooterTags: footerTags,
     subtitle,
-    renewalPrice,
-    expire,
-    expireColor,
     upRate,
     downRate,
     isOffline,
@@ -741,7 +707,6 @@ export const CompactNodeCard = memo(function CompactNodeCard({
     osName,
   } = model;
   const showTrafficTotal = themeSettings.isReady && themeSettings.compactShowTrafficTotal;
-  const showBilling = themeSettings.isReady && themeSettings.compactShowBilling;
   const showUptime = themeSettings.isReady && themeSettings.compactShowUptime;
   const showConnections = themeSettings.isReady && themeSettings.showConnections;
   // 开关关闭或节点离线时,完全跳过格式化工作。
@@ -762,11 +727,7 @@ export const CompactNodeCard = memo(function CompactNodeCard({
         upRate={upRate}
         downRate={downRate}
         showTrafficTotal={showTrafficTotal}
-        showBilling={showBilling}
         showConnections={showConnections}
-        expire={expire}
-        expireColor={expireColor}
-        renewalPrice={renewalPrice}
       />
       <CompactTrafficBar traffic={traffic} uptimeLabel={uptimeLabel} />
       {homepagePingLines.length > 0 ? (
