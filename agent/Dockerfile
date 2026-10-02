@@ -7,7 +7,7 @@
 #   docker build -t cfsm-agent:local .
 #
 # 多架构由 buildx 自动填充 TARGETOS / TARGETARCH。
-FROM alpine:3.21
+FROM alpine:3.24
 
 WORKDIR /app
 
