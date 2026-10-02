@@ -52,11 +52,13 @@ const CompactMultiPingRow = memo(function CompactMultiPingRow({
   return (
     <div className="compact-ping-row" title={`${line.taskName} · 延迟 ${latencyText} · 丢包 ${lossText}${isError && (line.lastValue != null || line.loss != null) ? " · 刷新失败，显示上次数据" : ""}`}>
       <div className="compact-ping-summary">
-        <span className="compact-ping-name-group">
-          <PingLineSwitcher uuid={uuid} slot={slot} taskName={line.taskName} />
-        </span>
-        <span className="compact-ping-current-value" style={{ color: line.lastValue == null ? "var(--text-tertiary)" : latencyColor }}>
-          <small>延迟</small>{latencyText}
+        <span className="compact-ping-primary">
+          <span className="compact-ping-name-group">
+            <PingLineSwitcher uuid={uuid} slot={slot} taskName={line.taskName} />
+          </span>
+          <span className="compact-ping-current-value compact-ping-latency-value" style={{ color: line.lastValue == null ? "var(--text-tertiary)" : latencyColor }}>
+            <small>延迟</small>{latencyText}
+          </span>
         </span>
         <span className="compact-ping-current-value compact-ping-loss-value" style={{ color: line.loss == null ? "var(--text-tertiary)" : lossColor }}>
           <small>丢包</small>{lossText}
