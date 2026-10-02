@@ -196,30 +196,84 @@ export async function cfsmPost<S extends z.ZodTypeAny>(
   return parsed.data;
 }
 
+/**
+ * `POST /api/ws-ticket` 的响应体。
+ *
+ * 原生 WebSocket 带不了 Authorization 头，跨域私有站点过去只能把长期 JWT 放进查询串。
+ * 现在改成先换一张 60 秒有效、只能用于 `/api/ws`、且只用一次的票据。
+ */
+const WsTicketSchema = z.object({
+  ticket: z.string().min(1),
+  expires_in: z.number().optional(),
+});
+
+export interface WsTicket {
+  ticket: string;
+  expiresIn: number;
+}
+
+/** 取一张短期连接票据。失败时抛错，调用方回落到 Cookie 鉴权。 */
+export async function requestWsTicket(options?: RequestOptions): Promise<WsTicket> {
+  const result = await cfsmPost("/api/ws-ticket", {}, WsTicketSchema, options);
+  return { ticket: result.ticket, expiresIn: result.expires_in ?? 60 };
+}
+
 export interface MultiBaseResult<T> {
   base: string;
   data?: T;
   error?: unknown;
 }
 
+export interface MultiBaseOptions {
+  signal?: AbortSignal;
+  timeout?: number;
+  /**
+   * 每有一个后端 settle 就回调一次（按**完成顺序**，不是 `getApiBases()` 顺序）。
+   *
+   * 有了它调用方才能真正做到「单站失败不阻塞其它站」：现在 `cfsmGetAll` 还是要等全部
+   * settle 才返回，但先回来的站点不必陪着最慢的站点一起等超时。回调抛错会被吞掉并
+   * 打一条警告，进度通知失败不该让已经发出的请求白费。
+   */
+  onResult?: (result: MultiBaseResult<unknown>) => void;
+}
+
 /**
  * 向所有后端并发发起同一个 GET。单站失败不影响其它站，调用方自行决定如何合并
  * 与如何提示（多站部署下部分站点离线属于常态）。
+ *
+ * 返回数组与 `getApiBases()` 严格同序 —— 跨站去重依赖这个顺序，所以按索引回填，
+ * 不用完成顺序。
  */
 export async function cfsmGetAll<S extends z.ZodTypeAny>(
   path: string,
   schema: S,
-  options?: Omit<RequestOptions, "base">,
+  options?: Omit<RequestOptions, "base"> & MultiBaseOptions,
 ): Promise<MultiBaseResult<z.output<S>>[]> {
+  const { onResult, ...requestOptions } = options ?? {};
   const bases = getApiBases();
-  const settled = await Promise.allSettled(
-    bases.map((base) => cfsmGet(path, schema, { ...options, base })),
+  const results = new Array<MultiBaseResult<z.output<S>>>(bases.length);
+
+  const notify = (result: MultiBaseResult<z.output<S>>) => {
+    if (!onResult) return;
+    try {
+      onResult(result);
+    } catch (error) {
+      console.warn("[LuminaPlus] cfsmGetAll onResult 回调抛错，已忽略：", error);
+    }
+  };
+
+  await Promise.all(
+    bases.map(async (base, index) => {
+      let result: MultiBaseResult<z.output<S>>;
+      try {
+        result = { base, data: await cfsmGet(path, schema, { ...requestOptions, base }) };
+      } catch (error) {
+        result = { base, error };
+      }
+      results[index] = result;
+      notify(result);
+    }),
   );
 
-  return settled.map((result, index) => {
-    const base = bases[index]!;
-    return result.status === "fulfilled"
-      ? { base, data: result.value }
-      : { base, error: result.reason };
-  });
+  return results;
 }

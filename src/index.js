@@ -10,7 +10,7 @@ import { handleServerAPI, handleServersAPI } from './handlers/dashboard.js';
 import { handleTheme } from './handlers/theme.js';
 import { handleGithubOAuthCallback, handleGithubOAuthStartApi, isGithubOAuthReady } from './handlers/githubAuth.js';
 import { isValidThemeOptions, loadSettings, loadSiteSettings, loadAppearanceOptions, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, saveThemeOptions, setDebug, debug } from './utils/settings.js';
-import { checkAuth, simpleAuthResponse } from './middleware/auth.js';
+import { checkAuth, simpleAuthResponse, createWsTicket } from './middleware/auth.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createNotFoundResponse, createErrorResponse } from './utils/errors.js';
 import { verifyTurnstileToken } from './utils/common.js';
 import { getCorsAllowedOrigins, createOptionsResponse, applyCors } from './utils/cors.js';
@@ -81,6 +81,9 @@ export default {
     const bypassTurnstilePaths = [
       '/admin/api',
       '/api/ws',
+      // 票据接口自己就要求持有效登录态；再叠一层 Turnstile 只会在验证服务抖动时
+      // 让实时连接整体建不起来。
+      '/api/ws-ticket',
     ];
 
     const isApiRequest = path.startsWith('/api/') || path.startsWith('/admin/api');
@@ -282,6 +285,16 @@ export default {
         return handleServersAPI(request, env, sys);
       }},
       { method: 'GET', path: '/api/ws', handler: async () => handleWebSocketUpgrade(request, env) },
+      // 短期一次性连接票据：把长期管理员 JWT 从 WebSocket 的 URL 里拿掉。
+      { method: 'POST', path: '/api/ws-ticket', handler: async () => {
+        const settings = await loadSiteSettings(env.DB);
+        if (!await checkAuth(request, env, settings)) {
+          return simpleAuthResponse();
+        }
+        return createSuccessResponse(await createWsTicket(env, settings), {
+          'Cache-Control': 'no-store'
+        });
+      }},
 
       { method: 'GET', path: '/api/history/all', handler: async () => {
         await ensureSiteSettings();

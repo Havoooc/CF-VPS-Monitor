@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchWithTimeout, withTimeoutSignal } from "@/utils/abort";
+import { ResponseTooLargeError, fetchWithTimeout, withTimeoutSignal } from "@/utils/abort";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -184,5 +184,82 @@ describe("response body timeout", () => {
     await vi.advanceTimersByTimeAsync(60);
     await assertion;
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("response body size limit", () => {
+  it("reads the body back when it stays under the limit", async () => {
+    const payload = JSON.stringify([{ a: 1 }]);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(payload)));
+
+    const response = await fetchWithTimeout("https://example.test/x", {}, 10_000, undefined, 1024);
+
+    await expect(response.text()).resolves.toBe(payload);
+  });
+
+  it("rejects from Content-Length alone, without draining the stream", async () => {
+    const stream = new ReadableStream({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(64));
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(stream, { headers: { "Content-Length": "2000" } }),
+      ),
+    );
+
+    const error = await fetchWithTimeout(
+      "https://example.test/x",
+      {},
+      10_000,
+      undefined,
+      100,
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ResponseTooLargeError);
+    // received 必须等于声明值 2000。若真去读了流，分片是 64 字节的倍数，不可能是 2000。
+    expect((error as ResponseTooLargeError).received).toBe(2000);
+  });
+
+  it("stops mid-stream once the running total passes the limit", async () => {
+    let pulls = 0;
+    const stream = new ReadableStream({
+      pull(controller) {
+        pulls += 1;
+        if (pulls > 50) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(new Uint8Array(64));
+      },
+    });
+    // 没有 Content-Length，只能边读边判。
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(stream)));
+
+    const error = await fetchWithTimeout(
+      "https://example.test/x",
+      {},
+      10_000,
+      undefined,
+      200,
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ResponseTooLargeError);
+    // 200 字节上限：最多读到第 4 个 64 字节分片就该停，不该把 50 片读完。
+    expect(pulls).toBeLessThan(10);
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["0", "0"],
+  ])("treats a %s Content-Length as unknown rather than a violation", async (_label, header) => {
+    const headers = header === undefined ? undefined : { "Content-Length": header };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("ok", { headers })));
+
+    const response = await fetchWithTimeout("https://example.test/x", {}, 10_000, undefined, 16);
+
+    await expect(response.text()).resolves.toBe("ok");
   });
 });

@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearHistoryCache,
+  getHistoryCacheSize,
   getLoadRecords,
   getMe,
   getPingRecords,
@@ -11,6 +12,7 @@ import {
   normalizeHistoryHours,
   refreshPingHistory,
   saveThemeOptions,
+  type ServersSnapshot,
 } from "@/services/api";
 import { resetApiBaseCache } from "@/services/cfsm/config";
 import { DEFAULT_CARRIER_NAMES } from "@/services/cfsm/mappers";
@@ -30,6 +32,21 @@ function jsonResponse(body: unknown, status = 200) {
 /** 让每次 fetch 都拿到独立的响应对象。 */
 function jsonReply(body: unknown, status = 200) {
   return async () => jsonResponse(body, status);
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+/** 多站部署：两个后端地址。 */
+function useTwoBases() {
+  document.head.innerHTML =
+    `<meta name="apiBase" content="${ORIGIN},https://backup.example.com">`;
+  resetApiBaseCache();
 }
 
 function serverPayload(overrides: Record<string, unknown> = {}) {
@@ -545,5 +562,189 @@ describe("refreshPingHistory", () => {
     expect(result.requested).toBe(12);
     expect(peak).toBeLessThanOrEqual(4);
     expect(peak).toBeGreaterThan(1);
+  });
+});
+
+describe("历史响应的结构校验", () => {
+  it("顶层不是数组时明确报错，而不是静默变成空数组", async () => {
+    // 旧实现用 `.catch([])`，接口坏了和「这段时间没数据」长得一模一样。
+    fetchMock.mockImplementation(jsonReply({ error: "boom", code: 500 }));
+
+    await expect(getLoadRecords("node-h06", 6)).rejects.toThrow(/Schema mismatch/);
+  });
+
+  it("单行坏掉只丢那一行，其余照常可用", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    fetchMock.mockImplementation(jsonReply([historyRow(), "broken-row", historyRow()]));
+
+    const { records } = await getLoadRecords("node-single-bad", 6);
+
+    expect(records).toHaveLength(2);
+    expect(warn.mock.calls.some((call) => String(call[0]).includes("格式不符"))).toBe(true);
+    // 诊断只报数量，不能把业务 payload 打出来。
+    const logged = warn.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(logged).not.toContain("broken-row");
+  });
+
+  it("整批都不合法时报错，让健康监控分得出「接口破了」", async () => {
+    fetchMock.mockImplementation(jsonReply(["broken", 42, null]));
+
+    await expect(getLoadRecords("node-all-bad", 6)).rejects.toThrow(/0 of 3 rows/);
+  });
+});
+
+describe("历史缓存的容量与代次", () => {
+  it("命中时不再打后端", async () => {
+    fetchMock.mockImplementation(jsonReply([historyRow()]));
+
+    await getLoadRecords("node-cache-hit", 6);
+    const calls = fetchMock.mock.calls.length;
+    await getLoadRecords("node-cache-hit", 6);
+
+    expect(fetchMock.mock.calls.length).toBe(calls);
+  });
+
+  it("超过条数上限时淘汰最久未使用的条目", async () => {
+    fetchMock.mockImplementation(jsonReply([historyRow()]));
+
+    const ids = Array.from({ length: 70 }, (_, index) => `node-lru-${index}`);
+    for (const id of ids) await getLoadRecords(id, 6);
+
+    expect(getHistoryCacheSize()).toBeLessThanOrEqual(64);
+
+    // node-lru-0 是最早写入的，早该被挤出去 —— 再查必须重新打后端。
+    const before = fetchMock.mock.calls.length;
+    await getLoadRecords("node-lru-0", 6);
+    expect(fetchMock.mock.calls.length).toBe(before + 1);
+
+    // 最后写入的还在缓存里。
+    const afterMiss = fetchMock.mock.calls.length;
+    await getLoadRecords("node-lru-69", 6);
+    expect(fetchMock.mock.calls.length).toBe(afterMiss);
+  });
+
+  it("命中的条目会被挪到队尾，不按写入时间被误淘汰", async () => {
+    fetchMock.mockImplementation(jsonReply([historyRow()]));
+
+    for (let index = 0; index < 63; index += 1) {
+      await getLoadRecords(`node-touch-${index}`, 6);
+    }
+    // 把最早那条"用一次"，它就该活下来。
+    await getLoadRecords("node-touch-0", 6);
+    await getLoadRecords("node-touch-63", 6);
+    await getLoadRecords("node-touch-64", 6);
+
+    const before = fetchMock.mock.calls.length;
+    await getLoadRecords("node-touch-0", 6);
+    expect(fetchMock.mock.calls.length).toBe(before);
+
+    // 而真正最久没用的 node-touch-1 应该已经被淘汰。
+    await getLoadRecords("node-touch-1", 6);
+    expect(fetchMock.mock.calls.length).toBe(before + 1);
+  });
+
+  it("清缓存期间在途的请求不会把结果回写", async () => {
+    const gate = deferred<Response>();
+    fetchMock.mockImplementation(() => gate.promise);
+
+    const pending = getLoadRecords("node-stale", 6);
+    clearHistoryCache();
+    gate.resolve(jsonResponse([historyRow()]));
+    await pending;
+
+    fetchMock.mockImplementation(jsonReply([historyRow()]));
+    const before = fetchMock.mock.calls.length;
+    await getLoadRecords("node-stale", 6);
+
+    expect(fetchMock.mock.calls.length).toBe(before + 1);
+  });
+
+  it("旧请求收尾时不会误删新请求的在途记录", async () => {
+    const first = deferred<Response>();
+    const second = deferred<Response>();
+    fetchMock.mockImplementationOnce(() => first.promise);
+    fetchMock.mockImplementation(() => second.promise);
+
+    const p1 = getLoadRecords("node-supersede", 6);
+    clearHistoryCache();
+    const p2 = getLoadRecords("node-supersede", 6);
+    first.resolve(jsonResponse([historyRow({ timestamp: 1 })]));
+    await p1;
+
+    // 第二个请求还挂着，第三次应复用它而不是再打一发。
+    const p3 = getLoadRecords("node-supersede", 6);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    second.resolve(jsonResponse([historyRow({ timestamp: 2 })]));
+    await Promise.all([p2, p3]);
+  });
+});
+
+describe("getServersSnapshot 的分阶段交付", () => {
+  it("慢站还没回来时，先把快站的数据交付出去", async () => {
+    useTwoBases();
+    const slow = deferred<Response>();
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url).startsWith(ORIGIN)
+        ? jsonResponse({
+            servers: [serverPayload()],
+            stats: { total: 1, online: 1 },
+            regionStats: { JP: 1 },
+            sysConfig: {},
+          })
+        : slow.promise,
+    );
+
+    const seen: ServersSnapshot[] = [];
+    const pending = getServersSnapshot({ onSnapshot: (snapshot) => seen.push(snapshot) });
+
+    await vi.waitFor(() => expect(seen.length).toBeGreaterThan(0));
+    expect(seen[0]!.servers.map((server) => server.id)).toEqual(["node-a"]);
+    expect(seen[0]!.partial).toBe(true);
+    expect(seen[0]!.baseByServerId.get("node-a")).toBe(ORIGIN);
+
+    slow.resolve(
+      jsonResponse({
+        servers: [serverPayload({ id: "node-b", name: "Node B" })],
+        stats: { total: 1 },
+        regionStats: { US: 1 },
+        sysConfig: {},
+      }),
+    );
+    const final = await pending;
+
+    expect(final.servers.map((server) => server.id).sort()).toEqual(["node-a", "node-b"]);
+    expect(final.partial).toBe(false);
+    // 中间快照只增不减：慢站的节点不会先消失再出现。
+    expect(seen.at(-1)!.servers.length).toBeLessThanOrEqual(final.servers.length);
+  });
+
+  it("全部站点失败时抛错，且不发出任何中间快照", async () => {
+    useTwoBases();
+    fetchMock.mockImplementation(jsonReply({ error: "boom", code: 500 }, 500));
+
+    const seen: ServersSnapshot[] = [];
+    await expect(
+      getServersSnapshot({ onSnapshot: (snapshot) => seen.push(snapshot) }),
+    ).rejects.toBeInstanceOf(Error);
+
+    expect(seen).toHaveLength(0);
+  });
+
+  it("不发中间快照时行为与从前一致", async () => {
+    useTwoBases();
+    fetchMock.mockImplementation(
+      jsonReply({
+        servers: [serverPayload()],
+        stats: { total: 1, online: 1 },
+        regionStats: { JP: 1 },
+        sysConfig: {},
+      }),
+    );
+
+    const snapshot = await getServersSnapshot();
+
+    expect(snapshot.partial).toBe(false);
+    expect(snapshot.servers).toHaveLength(1);
   });
 });

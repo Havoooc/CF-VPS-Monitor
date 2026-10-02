@@ -218,34 +218,23 @@ function emptyStats(): AggregatedStats {
   };
 }
 
+interface BaseServersResult {
+  base: string;
+  data?: z.output<typeof ServersResponseSchema>;
+  error?: unknown;
+}
+
 /**
- * 拉取全部后端的服务器列表并合并。多站部署下单站失败不阻塞其它站，
- * 但全部失败时抛出第一个错误，让上层进入错误态而不是渲染空列表。
+ * 按 `bases` 顺序合并已 settle 的后端结果。
+ *
+ * 纯函数：同一份 settled 数组重复调用得到同一份快照，所以既能用于「分阶段交付」的中间
+ * 快照，也能用于最终快照。未 settle 的槽位（undefined）按「这一站还没有结果」处理，
+ * 只影响 `partial` 标记。
  */
-const serverSnapshots = new Map<string, z.output<typeof ServersResponseSchema>>();
-
-export async function getServersSnapshot(
-  options?: Omit<RequestOptions, "base"> & { refreshBases?: readonly string[] },
-): Promise<ServersSnapshot> {
-  const { refreshBases, ...requestOptions } = options ?? {};
-  const bases = getApiBases();
-  for (const base of serverSnapshots.keys()) {
-    if (!bases.includes(base)) serverSnapshots.delete(base);
-  }
-  const refresh = refreshBases ? new Set(refreshBases) : null;
-  const results = await Promise.all(bases.map(async (base) => {
-    const cached = serverSnapshots.get(base);
-    if (refresh && !refresh.has(base) && cached) return { base, data: cached, error: undefined };
-    try {
-      const data = await cfsmGet("/api/servers", ServersResponseSchema, { ...requestOptions, base });
-      serverSnapshots.set(base, data);
-      return { base, data, error: undefined };
-    } catch (error) {
-      serverSnapshots.delete(base);
-      return { base, data: undefined, error };
-    }
-  }));
-
+function mergeServersSnapshot(
+  bases: readonly string[],
+  settled: ReadonlyArray<BaseServersResult | undefined>,
+): ServersSnapshot {
   const servers: CfsmServer[] = [];
   const baseByServerId = new Map<string, string>();
   const regionStats: Record<string, number> = {};
@@ -253,13 +242,9 @@ export async function getServersSnapshot(
   let sysConfig: SysConfig | null = null;
   let duplicated = false;
   let succeeded = 0;
-  let firstError: unknown = null;
 
-  for (const result of results) {
-    if (!result.data) {
-      firstError ??= result.error;
-      continue;
-    }
+  for (const result of settled) {
+    if (!result?.data) continue;
     succeeded += 1;
 
     const seen = new Set<string>();
@@ -281,12 +266,6 @@ export async function getServersSnapshot(
     }
     // 站点开关取第一个成功站点的配置。
     sysConfig ??= result.data.sysConfig;
-  }
-
-  if (succeeded === 0) {
-    throw firstError instanceof Error
-      ? firstError
-      : new Error("All API bases failed to return /api/servers");
   }
 
   // Without collisions preserve backend statistics (which may include hidden nodes).
@@ -318,8 +297,82 @@ export async function getServersSnapshot(
     sysConfig: sysConfig ?? ({} as SysConfig),
     regionStats,
     stats,
-    partial: succeeded < results.length,
+    partial: succeeded < bases.length,
   };
+}
+
+export interface ServersSnapshotOptions extends Omit<RequestOptions, "base"> {
+  refreshBases?: readonly string[];
+  /**
+   * 每有一个后端返回就重新合并并回调一次，用于「首屏不必等最慢的站点」。
+   *
+   * 中间快照的 `baseByServerId` 只增不减（未返回的站点不产出节点），所以调用方可以安全地
+   * 直接把它当最终快照用。**只在冷启动（本地还没有任何节点）时消费它** —— 热刷新时节点
+   * 会先消失再出现，卡片闪烁，得不偿失。
+   *
+   * 回调抛错会被吞掉：进度通知失败不该影响取数。
+   */
+  onSnapshot?: (snapshot: ServersSnapshot) => void;
+}
+
+/**
+ * 拉取全部后端的服务器列表并合并。多站部署下单站失败不阻塞其它站，
+ * 但全部失败时抛出第一个错误，让上层进入错误态而不是渲染空列表。
+ */
+const serverSnapshots = new Map<string, z.output<typeof ServersResponseSchema>>();
+
+export async function getServersSnapshot(
+  options?: ServersSnapshotOptions,
+): Promise<ServersSnapshot> {
+  const { refreshBases, onSnapshot, ...requestOptions } = options ?? {};
+  const bases = getApiBases();
+  for (const base of serverSnapshots.keys()) {
+    if (!bases.includes(base)) serverSnapshots.delete(base);
+  }
+  const refresh = refreshBases ? new Set(refreshBases) : null;
+
+  // 按 bases 索引回填：跨站去重顺序必须与 getApiBases() 一致，不能用完成顺序。
+  const settled = new Array<BaseServersResult | undefined>(bases.length);
+  let succeeded = 0;
+  let firstError: unknown = null;
+
+  const collect = (index: number, result: BaseServersResult) => {
+    settled[index] = result;
+    if (result.data) succeeded += 1;
+    else firstError ??= result.error;
+
+    // 已经有过成功站点就不再等别人：先把手上这份交付出去。
+    if (succeeded === 0 || !onSnapshot) return;
+    try {
+      onSnapshot(mergeServersSnapshot(bases, settled));
+    } catch (error) {
+      console.warn("[LuminaPlus] getServersSnapshot onSnapshot 回调抛错，已忽略：", error);
+    }
+  };
+
+  await Promise.all(bases.map(async (base, index) => {
+    const cached = serverSnapshots.get(base);
+    if (refresh && !refresh.has(base) && cached) {
+      collect(index, { base, data: cached, error: undefined });
+      return;
+    }
+    try {
+      const data = await cfsmGet("/api/servers", ServersResponseSchema, { ...requestOptions, base });
+      serverSnapshots.set(base, data);
+      collect(index, { base, data, error: undefined });
+    } catch (error) {
+      serverSnapshots.delete(base);
+      collect(index, { base, data: undefined, error });
+    }
+  }));
+
+  if (succeeded === 0) {
+    throw firstError instanceof Error
+      ? firstError
+      : new Error("All API bases failed to return /api/servers");
+  }
+
+  return mergeServersSnapshot(bases, settled);
 }
 
 /**
@@ -351,7 +404,32 @@ export async function getServerDetail(
  * 历史指标
  * ------------------------------------------------------------------ */
 
-const HistoryResponseSchema = z.array(HistoryRowSchema).catch([]);
+/**
+ * `/api/history/all` 的顶层校验。
+ *
+ * 必须真的是数组。旧实现写的是 `z.array(HistoryRowSchema).catch([])` —— 一行不合法或结构
+ * 变了，整批静默变成空数组，页面只是一片空白，用户和监控都分不出「接口坏了」和「这段时间
+ * 确实没数据」。顶层严格校验后，整批格式错会以 `Schema mismatch` 抛给调用方。
+ */
+const HistoryResponseSchema = z.array(z.unknown());
+
+export interface ParsedHistoryRows {
+  rows: HistoryRow[];
+  /** 被逐行校验拒绝的行数。 */
+  dropped: number;
+}
+
+/** 逐行校验：单行坏掉只丢这一行，并回报丢弃数量。 */
+export function parseHistoryRows(payload: unknown[]): ParsedHistoryRows {
+  const rows: HistoryRow[] = [];
+  let dropped = 0;
+  for (const raw of payload) {
+    const parsed = HistoryRowSchema.safeParse(raw);
+    if (parsed.success) rows.push(parsed.data);
+    else dropped += 1;
+  }
+  return { rows, dropped };
+}
 
 async function requestHistoryRows(
   serverId: string,
@@ -362,10 +440,26 @@ async function requestHistoryRows(
     id: serverId,
     hours: String(hours),
   });
-  const rows = await cfsmGet(`/api/history/all?${params}`, HistoryResponseSchema, {
+  const payload = await cfsmGet(`/api/history/all?${params}`, HistoryResponseSchema, {
     ...options,
     base: options?.base ?? getServerApiBase(serverId),
   });
+
+  const { rows, dropped } = parseHistoryRows(payload);
+  if (dropped > 0) {
+    if (rows.length === 0) {
+      // 整批都不认识：这是接口契约变了，不是「没有历史」。抛出去让上层进错误态。
+      throw new Error(
+        `Schema mismatch on /api/history/all: 0 of ${dropped} rows accepted for ${serverId}`,
+      );
+    }
+    // 诊断只报数量，不打业务 payload。
+    warnDegradedOnce(
+      `history-rows:${serverId}`,
+      `节点 ${serverId} 的历史数据有 ${dropped} 行格式不符，已丢弃。`,
+    );
+  }
+
   // 后端按时间倒序或正序都可能，图表要求升序。
   return [...rows].sort((left, right) => left.timestamp - right.timestamp);
 }
@@ -377,6 +471,11 @@ async function requestHistoryRows(
  * 分别取数据。缓存让同一节点同一时长的并发/连续请求只打一次后端。
  */
 const HISTORY_CACHE_TTL_MS = 20_000;
+/**
+ * 条数上限。`(后端, 节点, 时长)` 组合随节点数和时长档位相乘增长，长会话里遍历一遍所有
+ * 节点 + 所有档位就能把每个数组（最多 168 小时 × 采样点）留在 Map 里到页面关闭。
+ */
+const HISTORY_CACHE_MAX_ENTRIES = 64;
 
 interface HistoryCacheEntry {
   fetchedAt: number;
@@ -385,14 +484,43 @@ interface HistoryCacheEntry {
 
 const historyCache = new Map<string, HistoryCacheEntry>();
 const historyInFlight = new Map<string, Promise<HistoryRow[]>>();
+/** 每次清缓存自增；在途请求只有代次没变时才允许回写。 */
+let historyCacheGeneration = 0;
 
 function historyCacheKey(base: string, serverId: string, hours: number) {
   return JSON.stringify([base, serverId, hours]);
 }
 
+/**
+ * 回收过期条目（TTL 只管命中与否，不删就会一直占内存），再按 LRU 截断到上限。
+ * Map 的迭代顺序即插入顺序，命中时重新 set 一次就把它挪到队尾。
+ */
+function pruneHistoryCache(now: number): void {
+  for (const [key, entry] of historyCache) {
+    if (now - entry.fetchedAt >= HISTORY_CACHE_TTL_MS) historyCache.delete(key);
+  }
+  while (historyCache.size > HISTORY_CACHE_MAX_ENTRIES) {
+    const oldest = historyCache.keys().next();
+    if (oldest.done) break;
+    historyCache.delete(oldest.value);
+  }
+}
+
+function writeHistoryCache(key: string, entry: HistoryCacheEntry, now: number): void {
+  historyCache.delete(key);
+  historyCache.set(key, entry);
+  pruneHistoryCache(now);
+}
+
 export function clearHistoryCache(): void {
+  historyCacheGeneration += 1;
   historyCache.clear();
   historyInFlight.clear();
+}
+
+/** 测试与诊断用：当前缓存的条目数。 */
+export function getHistoryCacheSize(): number {
+  return historyCache.size;
 }
 
 /**
@@ -422,26 +550,36 @@ async function fetchHistoryRows(
   const base = validateApiBase(options?.base ?? getServerApiBase(serverId) ?? getPrimaryApiBase());
   const key = historyCacheKey(base, serverId, normalizedHours);
   const cached = historyCache.get(key);
-  if (cached && Date.now() - cached.fetchedAt < HISTORY_CACHE_TTL_MS) {
-    return cached.rows;
+  if (cached) {
+    if (Date.now() - cached.fetchedAt < HISTORY_CACHE_TTL_MS) {
+      // 命中即最近使用。
+      writeHistoryCache(key, cached, Date.now());
+      return cached.rows;
+    }
+    historyCache.delete(key);
   }
 
   const inFlight = historyInFlight.get(key);
   // 复用在途请求时不能沿用调用方的 signal，否则一个组件卸载会取消所有等待者。
   if (inFlight) return inFlight;
 
+  // 记下发起时的代次：期间若清过缓存，旧结果不许回写，否则会把上一代的数据灌进新缓存。
+  const generation = historyCacheGeneration;
   const request = requestHistoryRows(serverId, normalizedHours, {
     ...options,
     signal: undefined,
     base,
   })
     .then((rows) => {
-      historyCache.set(key, { fetchedAt: Date.now(), rows });
+      if (generation === historyCacheGeneration) {
+        writeHistoryCache(key, { fetchedAt: Date.now(), rows }, Date.now());
+      }
       backfillPingBuffer(serverId, rows);
       return rows;
     })
     .finally(() => {
-      historyInFlight.delete(key);
+      // 只删自己：期间可能已经有更新的在途请求占住了同一个 key。
+      if (historyInFlight.get(key) === request) historyInFlight.delete(key);
     });
   historyInFlight.set(key, request);
   return request;

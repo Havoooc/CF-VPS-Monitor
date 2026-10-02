@@ -129,10 +129,10 @@ my-theme/
 | 机制         | 使用位置            | 方式                                           |
 | ---------- | --------------- | -------------------------------------------- |
 | JWT Bearer | 非公开站点读取公开 API、查看 1 小时以上历史、保存第三方主题配置 | `Authorization: Bearer <token>`              |
-| WebSocket JWT | 非公开站点连接 `/api/ws` | `Authorization: Bearer <token>`、`Cookie: cfsm_auth=<token>` 或查询参数 `token` / `auth_token` / `ws_token` |
+| WebSocket 票据 | 非公开站点连接 `/api/ws` | `Authorization: Bearer <token>`、`Cookie: cfsm_auth=<token>` 或 `?ticket=<短期一次性票据>` |
 | Turnstile  | 公开 API（当启用时）    | `X-Turnstile-Token` 或 `X-Turnstile-Verified` |
 
-浏览器原生 WebSocket 不能自定义 `Authorization` Header。第三方主题在私有站点中连接 `/api/ws` 时，同域走登录后的 `cfsm_auth` Cookie，跨域走 WebSocket URL 查询参数 `token=<jwt>`。查询参数 token 可能出现在访问日志中，请只通过 HTTPS 使用。
+浏览器原生 WebSocket 不能自定义 `Authorization` Header。第三方主题在私有站点中连接 `/api/ws` 时，同域走登录后的 `cfsm_auth` Cookie；跨域先 `POST /api/ws-ticket`（带正常鉴权头）换一张 **60 秒有效、只能用于 `/api/ws`、且只用一次**的票据，再以 `?ticket=<票据>` 建连。长期登录 JWT 不允许出现在 WebSocket URL 里 —— 那会进浏览器历史、反向代理日志和追踪系统。
 
 ### 1.2 Turnstile 人机验证流程
 
@@ -547,13 +547,14 @@ Headers: Upgrade: websocket, Connection: Upgrade
 | 参数 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `subscribe` | 否 | `all` | `all` 订阅所有服务器，`<serverId>` 只订阅指定服务器 |
-| `token` / `auth_token` / `ws_token` | 否 | - | 非公开站点可用的 JWT 查询参数认证；公开站点不需要 |
+| `ticket` | 否 | - | 非公开站点跨域时的短期一次性连接票据，由 `POST /api/ws-ticket` 下发；公开站点与同域部署不需要 |
 
 **鉴权**：
 
-- 公开站点：无需 JWT。
-- 非公开站点：连接 `/api/ws` 必须通过 WebSocket JWT 认证，支持 `Authorization: Bearer <jwt>`、`Cookie: cfsm_auth=<jwt>`、查询参数 `token` / `auth_token` / `ws_token`。
-- 浏览器主题通常不能设置 WebSocket `Authorization` Header；同域部署使用 `cfsm_auth` Cookie，跨域或纯静态主题在 WebSocket URL 上追加 `token=<jwt>`。
+- 公开站点：无需凭证。
+- 非公开站点：同域用 `Cookie: cfsm_auth=<jwt>`（浏览器握手时自动带上）；跨域或纯静态部署先 `POST /api/ws-ticket` 换票据，再 `?ticket=<票据>` 建连。`Authorization: Bearer <jwt>` 也接受，但浏览器原生 WebSocket 设不了这个头。
+- 票据特点：有效期 60 秒、用途限定为 WS、**首次使用即作废**（重放返回 401），因此即使出现在日志里，攻击窗口也远小于过去的 7 天 JWT。
+- `token` / `auth_token` / `ws_token` 三个查询参数**已不再接受**，避免长期管理员令牌进入 URL。
 
 **过滤机制**：
 
@@ -582,7 +583,7 @@ Headers: Upgrade: websocket, Connection: Upgrade
 - HTTP 初始数据：`GET https://example.com/api/server?id=<id>`
 - WebSocket 实时订阅：`wss://example.com/api/ws?subscribe=<id>`
 
-非公开站点同域部署时直接使用 Cookie 认证；跨域或纯静态主题无法依赖同域 Cookie 时，再使用查询参数认证：`wss://example.com/api/ws?subscribe=<id>&token=<jwt>`。
+非公开站点同域部署时直接使用 Cookie 认证；跨域或纯静态主题无法依赖同域 Cookie 时，先换票据再建连：`POST /api/ws-ticket` 拿到 `{ ticket, expires_in }`，然后连 `wss://example.com/api/ws?subscribe=<id>&ticket=<票据>`。票据一次性，**每次（重）连都要重新换一张**。
 
 详情页不要使用 `GET https://example.com/api/servers` 拉全量列表，也不要使用 `wss://example.com/api/ws?subscribe=all` 订阅全量更新后再在前端过滤。
 

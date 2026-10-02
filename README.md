@@ -397,9 +397,9 @@ smtp://<用户名>:<密码>@<host>:<port>?from=<发件人>&to=<收件人1,收件
 
 - 管理员登录成功后会签发 7 天有效期的 JWT；前端会用于后续管理请求，并设置 `cfsm_auth` HttpOnly Cookie。
 - 私有站点（`is_public !== 'true'`）会对 `/api/servers`、`/api/server`、`/api/history/all` 和 `/api/ws` 做登录校验；未授权的 WebSocket 不会转发到 Durable Object。
-- `/api/ws` 支持三种 JWT 认证来源：`Authorization: Bearer <token>`、`Cookie: cfsm_auth=<token>`、查询参数 `token` / `auth_token` / `ws_token`。
-- 浏览器原生 WebSocket 不能自定义 `Authorization` Header，内置前端同域连接走 `cfsm_auth` Cookie，跨域连接才在 URL 中追加 `token=<jwt>` 查询参数。
-- 查询参数 token 可能出现在访问日志中，请只通过 HTTPS 使用，并避免把带 token 的 WebSocket URL 分享给他人。
+- `/api/ws` 的凭证来源：`Authorization: Bearer <token>`、`Cookie: cfsm_auth=<token>`，或一张由 `POST /api/ws-ticket` 下发的**短期一次性票据**（`?ticket=<票据>`）。
+- 浏览器原生 WebSocket 不能自定义 `Authorization` Header，内置前端同域连接走 `cfsm_auth` Cookie；跨域（纯静态部署的主题）先换票据再建连。
+- 票据有效期 60 秒、用途限定为 WS、首次使用即作废，重放返回 401。查询参数 `token` / `auth_token` / `ws_token` 已不再接受 —— 长期管理员 JWT 不允许出现在 URL 里（那会进浏览器历史与反向代理日志）。
 - 后台可配置“前端 WSS 超时（分钟）”：默认 `0`，表示不因连接时长主动断开；设为正整数后，内置前端到时会断开实时订阅并弹窗让用户选择关闭或继续。
 
 ### Turnstile

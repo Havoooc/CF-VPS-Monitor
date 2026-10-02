@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MetricsBroadcaster } from '../src/durable/MetricsBroadcaster.js';
 import { flushBroadcastBatch, getHistoryMetrics, handleUpdateWebSocketUpgrade, handleWebSocketUpgrade, queueBroadcastSamples } from '../src/handlers/update.js';
-import { buildAuthCookie, generateToken } from '../src/middleware/auth.js';
+import { buildAuthCookie, createWsTicket, generateToken, verifyWsTicket } from '../src/middleware/auth.js';
 import { buildResourceAlertNotificationPayloads } from '../src/services/notification.js';
 import { clearSiteSettingsCache, DEFAULT_NOTIFICATION_TEMPLATE, normalizeNotificationTemplate, normalizeResourceAlertRules } from '../src/utils/settings.js';
 
@@ -130,6 +130,39 @@ function makeWebSocketEnv(settings, onFetch = null) {
   };
 }
 
+/**
+ * 带「真」票据消费能力的 env：`/ws-ticket/consume` 返回真正的 Response，重复 jti 回 409。
+ * `makeWebSocketEnv` 里那个裸对象只有 `{status: 101}`，测不出一次性语义。
+ */
+function makeTicketEnv(settings, onFetch = null) {
+  const env = makeWebSocketEnv(settings);
+  const usedJti = new Set();
+  env.METRICS_BROADCASTER = {
+    idFromName() {
+      return 'global';
+    },
+    get() {
+      return {
+        async fetch(input, init) {
+          // 真实 DO stub 同时接受 (url, init) 与 Request，这里也照做。
+          const request = typeof input === 'string' ? new Request(input, init) : input;
+          if (new URL(request.url).pathname === '/ws-ticket/consume') {
+            const body = await request.json();
+            if (usedJti.has(body.jti)) {
+              return new Response(JSON.stringify({ ok: false, reason: 'replayed' }), { status: 409 });
+            }
+            usedJti.add(body.jti);
+            return new Response(JSON.stringify({ ok: true }), { status: 200 });
+          }
+          if (onFetch) onFetch(request);
+          return { status: 101 };
+        }
+      };
+    }
+  };
+  return env;
+}
+
 test('private frontend WebSocket rejects unauthenticated clients', async () => {
   let forwarded = false;
   const env = makeWebSocketEnv({ is_public: 'false' }, () => {
@@ -167,20 +200,111 @@ test('Agent WSS upgrade rejects disabled state with fast-switch envelope', async
   assert.equal(forwarded, false);
 });
 
-test('private frontend WebSocket accepts query token auth', async () => {
+test('private frontend WebSocket accepts a short-lived one-time ticket', async () => {
   let forwardedUrl = '';
-  const env = makeWebSocketEnv({ is_public: 'false' }, request => {
+  const env = makeTicketEnv({ is_public: 'false' }, request => {
     forwardedUrl = request.url;
   });
-  const token = await generateToken(env, { jwt_secret: 'x'.repeat(32) });
+  const { ticket, expires_in } = await createWsTicket(env, { jwt_secret: 'x'.repeat(32) });
+
+  assert.equal(expires_in, 60);
 
   const response = await handleWebSocketUpgrade(
-    makeWebSocketUpgradeRequest(`https://example.com/api/ws?subscribe=all&token=${encodeURIComponent(token)}`),
+    makeWebSocketUpgradeRequest(`https://example.com/api/ws?subscribe=all&ticket=${encodeURIComponent(ticket)}`),
     env
   );
 
   assert.equal(response.status, 101);
   assert.equal(new URL(forwardedUrl).pathname, '/ws');
+});
+
+test('the same ticket cannot be replayed', async () => {
+  const env = makeTicketEnv({ is_public: 'false' });
+  const { ticket } = await createWsTicket(env, { jwt_secret: 'x'.repeat(32) });
+  const url = `https://example.com/api/ws?subscribe=all&ticket=${encodeURIComponent(ticket)}`;
+
+  const first = await handleWebSocketUpgrade(makeWebSocketUpgradeRequest(url), env);
+  const second = await handleWebSocketUpgrade(makeWebSocketUpgradeRequest(url), env);
+
+  assert.equal(first.status, 101);
+  assert.equal(second.status, 401);
+});
+
+test('a long-lived admin JWT in the query string is no longer accepted', async () => {
+  const env = makeTicketEnv({ is_public: 'false' });
+  const token = await generateToken(env, { jwt_secret: 'x'.repeat(32) });
+
+  for (const key of ['token', 'auth_token', 'ws_token']) {
+    const response = await handleWebSocketUpgrade(
+      makeWebSocketUpgradeRequest(`https://example.com/api/ws?subscribe=all&${key}=${encodeURIComponent(token)}`),
+      env
+    );
+    assert.equal(response.status, 401, `${key} 不该再被接受`);
+  }
+});
+
+test('tickets are purpose-scoped and reject garbage', async () => {
+  const env = makeTicketEnv({ is_public: 'false' });
+  const sys = { jwt_secret: 'x'.repeat(32) };
+
+  // 管理员长期令牌用途不对，不能当票据用。
+  assert.equal(await verifyWsTicket(await generateToken(env, sys), env, sys), null);
+  assert.equal(await verifyWsTicket('not-a-jwt', env, sys), null);
+  assert.equal(await verifyWsTicket('', env, sys), null);
+});
+
+test('a tampered ticket is rejected', async () => {
+  const env = makeTicketEnv({ is_public: 'false' });
+  const { ticket } = await createWsTicket(env, { jwt_secret: 'x'.repeat(32) });
+  const [header, payload, signature] = ticket.split('.');
+  const forged = `${header}.${payload}.${signature.slice(0, -2)}xx`;
+
+  const response = await handleWebSocketUpgrade(
+    makeWebSocketUpgradeRequest(`https://example.com/api/ws?subscribe=all&ticket=${encodeURIComponent(forged)}`),
+    env
+  );
+
+  assert.equal(response.status, 401);
+});
+
+test('ticket consumption is one-time in the DO', async () => {
+  const used = new Set();
+  const state = {
+    setWebSocketAutoResponse() {},
+    getWebSockets() {
+      return [];
+    },
+    storage: {
+      map: new Map(),
+      async get(key) {
+        return this.map.get(key) ?? null;
+      },
+      async put(key, value) {
+        this.map.set(key, value);
+      },
+      async list({ prefix } = {}) {
+        const out = [];
+        for (const [key, value] of this.map) {
+          if (!prefix || key.startsWith(prefix)) out.push([key, value]);
+        }
+        return out;
+      },
+      async delete(keys) {
+        for (const key of Array.isArray(keys) ? keys : [keys]) this.map.delete(key);
+      }
+    }
+  };
+  const broadcaster = new MetricsBroadcaster(state, { DB: {} });
+  const consume = jti => broadcaster.fetch(new Request('http://internal/ws-ticket/consume', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jti, exp: Math.floor(Date.now() / 1000) + 60 })
+  }));
+
+  assert.equal((await consume('abc')).status, 200);
+  assert.equal((await consume('abc')).status, 409);
+  assert.equal((await consume('def')).status, 200);
+  assert.equal((await consume('')).status, 400);
 });
 
 test('private frontend WebSocket accepts auth cookie', async () => {

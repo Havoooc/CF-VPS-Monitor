@@ -1,4 +1,5 @@
-import { getJwtToken, toWebSocketBase } from "@/services/cfsm/config";
+import { toWebSocketBase } from "@/services/cfsm/config";
+import { requestWsTicket } from "@/services/cfsm/http";
 
 /**
  * `/api/ws` 实时推送客户端。
@@ -8,6 +9,8 @@ import { getJwtToken, toWebSocketBase } from "@/services/cfsm/config";
  *   否则服务端不会推送任何更新；
  * - 推送统一为 `batchUpdate`，样本对象可能落在 `data` / `payload` / `metrics` 任一字段；
  * - `ids` 最多 500 个，非法 `scope`/`ids` 会被以 close code 1008 断开——这种情况重连也没用。
+ *
+ * 鉴权见 `buildWsUrl`：同域用 Cookie，跨域换一张短期一次性票据。
  */
 
 const MAX_SUBSCRIBE_IDS = 500;
@@ -82,15 +85,31 @@ function extractSamples(message: unknown): WsSample[] {
 }
 
 /**
- * `/api/ws` 的连接地址。私有站点里：同域靠登录后的 `cfsm_auth` Cookie；跨域（纯静态部署的主题）时
- * 原生 WebSocket 不支持 Authorization 头。只使用 Cookie 鉴权；需要 JWT 的跨域私有站点
- * 在后端支持短期票据前通过 REST 轮询访问，避免长期 JWT 出现在访问日志。
+ * 页面与后端不同源吗？
+ *
+ * 同源部署（主题由 Worker 自己发）靠 `cfsm_auth` Cookie 就够了，握手时浏览器自动带上，
+ * 不必多打一次票据接口。跨域部署（主题放到 GitHub Pages 之类的静态站）Cookie 因为
+ * SameSite=Lax 根本不会带，只能换票据。
  */
-export function buildWsUrl(base: string, _token: string, _pageHost: string): string {
-  void _token; void _pageHost;
+function isCrossOrigin(base: string): boolean {
+  try {
+    return new URL(toWebSocketBase(base)).host !== window.location.host;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `/api/ws` 的连接地址。
+ *
+ * 鉴权二选一：同域靠登录后的 `cfsm_auth` Cookie；跨域带一张由 `/api/ws-ticket` 换来的
+ * **60 秒有效、只能用于 WS、只用一次**的票据。长期管理员 JWT 永远不进 URL —— 那会进
+ * 浏览器历史、反代日志和追踪系统。
+ */
+export function buildWsUrl(base: string, ticket?: string): string {
   const url = new URL(`${toWebSocketBase(base)}/api/ws`);
   url.searchParams.set("subscribe", "all");
-  // Long-lived JWTs must never appear in URLs; cookie auth or REST fallback only.
+  if (ticket) url.searchParams.set("ticket", ticket);
   return url.toString();
 }
 
@@ -112,6 +131,8 @@ export function createWsConnection(
   let available = false;
   let watchdog: number | null = null;
   let lastMessageAt = 0;
+  /** 每次 connect 自增；换票据是异步的，回来时可能已经又开了一轮。 */
+  let connectGeneration = 0;
 
   function setAvailable(next: boolean) {
     if (available === next) return;
@@ -145,15 +166,33 @@ export function createWsConnection(
     reconnectAttempts += 1;
     reconnectTimer = window.setTimeout(() => {
       reconnectTimer = null;
-      connect();
+      void connect();
     }, Math.round(delay * (0.8 + Math.random() * 0.4)));
   }
 
-  function connect() {
-    if (closed) return;
+  /**
+   * 跨域时先换一张一次性票据再建连。换不到就退回 Cookie 鉴权 —— 同源部署本来就只用 Cookie，
+   * 不能因为票据接口抽风把实时推送整体停掉。
+   */
+  async function resolveTicket(): Promise<string | undefined> {
+    if (!isCrossOrigin(base)) return undefined;
     try {
-      // 每次（重）连都现算地址：期间可能登录 / 退出过，token 要跟着变。
-      socket = new WebSocket(buildWsUrl(base, getJwtToken(base), window.location.host));
+      return (await requestWsTicket({ base })).ticket;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async function connect() {
+    if (closed) return;
+    const generation = ++connectGeneration;
+
+    const ticket = await resolveTicket();
+    // 换票期间可能已经 close() 或者又开了一轮，那这次就不该再建连。
+    if (closed || generation !== connectGeneration) return;
+
+    try {
+      socket = new WebSocket(buildWsUrl(base, ticket));
     } catch {
       setAvailable(false);
       scheduleReconnect();
@@ -212,7 +251,7 @@ export function createWsConnection(
     };
   }
 
-  connect();
+  void connect();
 
   return {
     updateIds(nextIds: string[]) {

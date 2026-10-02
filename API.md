@@ -35,6 +35,7 @@
   - [2.3](#23-get-apiserver---获取单台服务器详情) [`GET /api/server`](#23-get-apiserver---获取单台服务器详情) [- 获取单台服务器详情](#23-get-apiserver---获取单台服务器详情)
   - [2.4](#24-get-apihistoryall---获取历史指标) [`GET /api/history/all`](#24-get-apihistoryall---获取历史指标) [- 获取历史指标](#24-get-apihistoryall---获取历史指标)
   - [2.5](#25-get-apiws---websocket-实时推送) [`GET /api/ws`](#25-get-apiws---websocket-实时推送) [- WebSocket 实时推送](#25-get-apiws---websocket-实时推送)
+  - [2.5.1](#251-post-apiws-ticket---签发短期一次性连接票据) [`POST /api/ws-ticket`](#251-post-apiws-ticket---签发短期一次性连接票据) [- 签发短期一次性连接票据](#251-post-apiws-ticket---签发短期一次性连接票据)
   - [2.6](#26-get-theme---获取主题商店数据) [`GET /theme`](#26-get-theme---获取主题商店数据) [- 获取主题商店数据](#26-get-theme---获取主题商店数据)
   - [2.7](#27-前端与主题代理) [前端与主题代理](#27-前端与主题代理)
 - [3. 管理端 API（鉴权）](#3-管理端-api鉴权)
@@ -115,16 +116,17 @@
 >
 > **2026-07-26 修订**：加载站点设置时，后端会在缺少有效 `jwt_secret` 时生成并持久化一个 32 字节随机密钥。因此第 2、3 级回退主要用于数据库加载异常等兜底场景。
 
-#### D. WebSocket JWT（私有站点前端实时推送）
+#### D. WebSocket 票据（私有站点前端实时推送）
 
 - **使用位置**：`GET /api/ws`，仅当 `site_options.is_public !== 'true'` 时强制校验
 - **认证来源**（任一通过即可）：
   - `Authorization: Bearer <token>`
   - `Cookie: cfsm_auth=<token>`
-  - 查询参数：`token=<token>`、`auth_token=<token>` 或 `ws_token=<token>`
+  - `POST /api/ws-ticket` 换来的短期一次性票据，以 `?ticket=<token>` 传入
+- **票据规格**：有效期 60 秒、用途限定为 WS、首次使用即作废（重放返回 401）
 - **失败返回**：`401 { "error": "Unauthorized", "code": 401 }`
 
-浏览器原生 WebSocket 不能自定义 `Authorization` Header。内置前端同域连接走 `cfsm_auth` Cookie，跨域连接才追加 `token=<jwt>` 查询参数。服务端会在转发到 Durable Object 前完成私有站点权限校验；公开站点不要求 JWT。
+浏览器原生 WebSocket 不能自定义 `Authorization` Header。内置前端同域连接走 `cfsm_auth` Cookie，跨域连接先用正常鉴权头调用 `POST /api/ws-ticket` 换票据，再以 `?ticket=` 建连。**查询参数 `token` / `auth_token` / `ws_token` 已不再接受**，长期登录 JWT 不允许进入 URL。服务端会在转发到 Durable Object 前完成私有站点权限校验；公开站点不要求凭证。
 
 ### 0.2 Turnstile 人机验证
 
@@ -878,12 +880,12 @@ Content-Type: application/json
   - `subscribe`（可选，默认 `all`）：
     - `all` → 订阅所有服务器的最新指标（**批量合并推送，每 5 秒一次**）
     - `<serverId>` → 只订阅指定服务器；~~收到上报后立即实时推送。~~ **2026-07-26 修订**：同样经过最长约 5 秒的 Worker 合并窗口
-  - `token` / `auth_token` / `ws_token`（私有站点可选）：JWT 登录令牌，用于浏览器 WebSocket 无法设置 `Authorization` Header 的场景
+  - `ticket`（私有站点可选）：由 `POST /api/ws-ticket` 下发的短期一次性连接票据，供浏览器 WebSocket 无法设置 `Authorization` Header 的场景使用
 
 **鉴权**：
 
-- 公开站点：无需 JWT。
-- 私有站点：必须通过 WebSocket JWT 认证，认证来源支持 `Authorization: Bearer <jwt>`、`Cookie: cfsm_auth=<jwt>`、查询参数 `token` / `auth_token` / `ws_token`。浏览器前端同域走 Cookie，跨域走查询参数。
+- 公开站点：无需凭证。
+- 私有站点：认证来源支持 `Authorization: Bearer <jwt>`、`Cookie: cfsm_auth=<jwt>`、查询参数 `ticket=<票据>`。浏览器前端同域走 Cookie，跨域先换票据再建连；查询参数 `token` / `auth_token` / `ws_token` 已不再接受。
 - `ids` 只控制订阅过滤范围，不是服务端鉴权。
 
 **Response** `101 Switching Protocols`（WebSocket 握手）
@@ -1019,6 +1021,46 @@ ws.onmessage = (ev) => {
     }
   }
 };
+```
+
+***
+
+### 2.5.1 `POST /api/ws-ticket` - 签发短期一次性连接票据
+
+> **鉴权**：必须。公开站点不要求，但带着登录态调用也可用。
+> **Turnstile**：不参与（该端点自身已要求有效登录态）。
+
+跨域部署的主题无法依赖 `cfsm_auth` Cookie，又不该把 7 天有效的登录 JWT 塞进 WebSocket URL。
+本端点用正常鉴权头换一张一次性票据，再以 `/api/ws?ticket=<票据>` 建连。
+
+**Request**
+
+- Method：`POST`
+- Path：`/api/ws-ticket`
+- Body：无（`{}` 即可）
+
+**Response** `200`
+
+```json
+{ "ticket": "<JWT>", "expires_in": 60 }
+```
+
+**Response Header**：`Cache-Control: no-store`
+
+**票据语义**
+
+| 属性 | 值 |
+| --- | --- |
+| 有效期 | 60 秒 |
+| 用途 | 仅 `/api/ws`；管理员令牌不能当票据用，票据也不能当管理员令牌用 |
+| 可用次数 | 1 次。重复使用返回 `/api/ws` 的 `401` |
+| 登录 JWT 进 URL | 不支持。`token` / `auth_token` / `ws_token` 查询参数已移除 |
+
+**cURL 示例**
+
+```bash
+curl -X POST https://status.example.com/api/ws-ticket \
+  -H "Authorization: Bearer <jwt>"
 ```
 
 ***
@@ -2134,8 +2176,10 @@ wscat -c "wss://status.example.com/api/ws?subscribe=all"
 # 订阅指定服务器
 wscat -c "wss://status.example.com/api/ws?subscribe=9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f"
 
-# 私有站点：使用查询参数 JWT
-wscat -c "wss://status.example.com/api/ws?subscribe=all&token=<jwt>"
+# 私有站点跨域：先换一张 60 秒一次性票据
+TICKET=$(curl -s -X POST https://status.example.com/api/ws-ticket \
+  -H "Authorization: Bearer $JWT" | jq -r .ticket)
+wscat -c "wss://status.example.com/api/ws?subscribe=all&ticket=$TICKET"
 ```
 
 ### 8.16 公共：获取主题商店

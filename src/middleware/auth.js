@@ -3,7 +3,18 @@ import { verifyPasswordHash } from '../utils/common.js';
 import { isValidJwtSecret } from '../utils/settings.js';
 
 export const AUTH_COOKIE_NAME = 'cfsm_auth';
-const TOKEN_QUERY_KEYS = ['token', 'auth_token', 'ws_token'];
+
+/**
+ * WebSocket 连接票据。
+ *
+ * 原生 WebSocket 没法带 Authorization 头，所以跨域私有站点过去只能把长期管理员 JWT 塞进
+ * 查询串 —— 那个 URL 会进浏览器历史、反代日志、追踪系统。现在改成：
+ * 先 `POST /api/ws-ticket`（走正常鉴权）换一张 **60 秒有效、只能用于 /api/ws、且只用一次**
+ * 的票据，再拿它去建连。泄露出去的窗口从 7 天缩到 60 秒。
+ */
+export const WS_TICKET_QUERY_KEY = 'ticket';
+export const WS_TICKET_PURPOSE = 'ws';
+export const WS_TICKET_TTL_SECONDS = 60;
 
 async function generateKeyFromSecret(secret) {
   const encoder = new TextEncoder();
@@ -125,24 +136,89 @@ export async function checkAuth(request, env, sys) {
   return verifyToken(getCookieValue(request, AUTH_COOKIE_NAME), env, sys);
 }
 
+function randomTicketId() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** 签一张短期连接票据。调用方必须先确认请求已通过正常鉴权。 */
+export async function createWsTicket(env, sys) {
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    purpose: WS_TICKET_PURPOSE,
+    jti: randomTicketId(),
+    iat: now,
+    exp: now + WS_TICKET_TTL_SECONDS
+  };
+  const secret = getJwtSecret(env, sys);
+  return {
+    ticket: await signJwt(payload, secret),
+    expires_in: WS_TICKET_TTL_SECONDS
+  };
+}
+
+/**
+ * 校验票据签名、有效期与用途。**不判断是否已用过** —— 那一步要做一次性登记，
+ * 见 `consumeWsTicket`。用途限定是必须的：否则一张票据就等于一段可复用的短期管理员令牌。
+ */
+export async function verifyWsTicket(ticket, env, sys) {
+  if (!ticket || typeof ticket !== 'string') return null;
+  const secret = getJwtSecret(env, sys);
+  const payload = await verifyJwt(ticket, secret);
+  if (!payload || payload.purpose !== WS_TICKET_PURPOSE) return null;
+  if (typeof payload.jti !== 'string' || payload.jti.length === 0) return null;
+  return payload;
+}
+
+export function readWsTicket(request) {
+  try {
+    return new URL(request.url).searchParams.get(WS_TICKET_QUERY_KEY) || '';
+  } catch (_) {
+    return '';
+  }
+}
+
+/**
+ * 一次性消费登记。登记在全局唯一的 MetricsBroadcaster DO 上，重放返回 409。
+ *
+ * 只有明确的 409 才判定为「用过」。DO 返回其它异常状态或直接抛错时**放行**：票据本身
+ * 只剩 60 秒寿命，而「实时推送整体挂掉」比「重放窗口在 60 秒内存在」严重得多。
+ * 这条降级路径会留一条日志。
+ */
+async function consumeWsTicket(env, payload) {
+  if (!env?.METRICS_BROADCASTER) return true;
+  try {
+    const id = env.METRICS_BROADCASTER.idFromName('global');
+    const stub = env.METRICS_BROADCASTER.get(id);
+    const response = await stub.fetch('http://internal/ws-ticket/consume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jti: payload.jti, exp: payload.exp })
+    });
+    if (response.status === 409) return false;
+    if (!response.ok) {
+      console.warn(`[ws-ticket] consume returned ${response.status}, accepting within TTL`);
+    }
+    return true;
+  } catch (e) {
+    console.warn('[ws-ticket] consume failed, accepting within TTL:', e?.message || e);
+    return true;
+  }
+}
+
+/**
+ * `/api/ws` 的鉴权：同源 Cookie（正常情况）、Bearer（用于不走 Cookie 的场景），
+ * 或者一张有效的短期一次性票据。**不再接受任何查询串里的长期 JWT。**
+ */
 export async function checkWebSocketAuth(request, env, sys) {
   if (await checkAuth(request, env, sys)) {
     return true;
   }
 
-  let url;
-  try {
-    url = new URL(request.url);
-  } catch (_) {
-    return false;
-  }
-
-  for (const key of TOKEN_QUERY_KEYS) {
-    if (await verifyToken(url.searchParams.get(key), env, sys)) {
-      return true;
-    }
-  }
-  return false;
+  const payload = await verifyWsTicket(readWsTicket(request), env, sys);
+  if (!payload) return false;
+  return consumeWsTicket(env, payload);
 }
 
 export function buildAuthCookie(request, token, maxAge = 604800) {

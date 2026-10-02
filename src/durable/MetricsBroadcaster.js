@@ -60,6 +60,10 @@ const AGENT_WSS_SCHEDULE_INACTIVE = 'wss_schedule_inactive';
 const AGENT_WSS_SCHEDULE_DISABLED = 'wss_disabled';
 const ALLOWED_AGENT_REPORT_INTERVALS = new Set([30, 60, 120, 180]);
 const RESOURCE_ALERT_STORAGE_KEY = 'resource_alert_windows_v1';
+/** 前端 WS 票据的一次性登记：票据寿命 60 秒，记录保留 10 分钟后回收。 */
+const WS_TICKET_STORAGE_PREFIX = 'ws_ticket_used:';
+const WS_TICKET_RETENTION_MS = 10 * 60 * 1000;
+const WS_TICKET_PRUNE_INTERVAL_MS = 60 * 1000;
 const RESOURCE_ALERT_BUCKET_MS = 60 * 1000;
 const RESOURCE_ALERT_MAX_BUCKETS = 10;
 const RESOURCE_ALERT_MAX_SERVERS = 1000;
@@ -291,6 +295,8 @@ export class MetricsBroadcaster {
     this.pendingFrontendBroadcasts = new Map();
     this.frontendBroadcastTimer = null;
     this.pendingFrontendBroadcastTs = 0;
+    /** 上次回收 WS 票据登记的时刻；DO 实例内即可，重启后重来一次无所谓。 */
+    this.wsTicketPrunedAt = 0;
 
     // 自动响应 ping 心跳，DO 无需被唤醒
     // @ts-ignore - Cloudflare Workers 运行时提供 WebSocketRequestResponsePair
@@ -1024,6 +1030,86 @@ export class MetricsBroadcaster {
     });
   }
 
+  /**
+   * 前端 WebSocket 短期票据的一次性登记。
+   *
+   * 票据本身由 Worker 用 JWT 签名并限定 60 秒寿命（见 middleware/auth.js），这里只负责
+   * 「这张票有没有被用过」。放在全局唯一的 DO 上，是因为 Worker 实例是会水平扩的，
+   * 内存里的 Set 拦不住打到另一个实例的重放。
+   *
+   * 重放返回 409；jti 非法返回 400。登记值就是消费时刻，用于过期回收。
+   */
+  async _handleWsTicketConsume(request) {
+    let body = null;
+    try {
+      body = await request.json();
+    } catch (_) {
+      return new Response(JSON.stringify({ ok: false, reason: 'invalidJson' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    const jti = typeof body?.jti === 'string' ? body.jti.trim() : '';
+    if (!jti || jti.length > 64) {
+      return new Response(JSON.stringify({ ok: false, reason: 'invalidJti' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    const key = `${WS_TICKET_STORAGE_PREFIX}${jti}`;
+    const now = Date.now();
+
+    let seen = null;
+    try {
+      seen = await this.state.storage.get(key);
+    } catch (e) {
+      console.warn('[ws-ticket] storage read failed:', e?.message || e);
+    }
+
+    if (seen) {
+      return new Response(JSON.stringify({ ok: false, reason: 'replayed' }), {
+        status: 409,
+        headers: { 'Cache-Control': 'no-store', 'Content-Type': 'application/json' }
+      });
+    }
+
+    try {
+      await this.state.storage.put(key, now);
+      // 顺手回收，避免这条记录比票据活得久。失败不影响本次判定。
+      if (now - this.wsTicketPrunedAt > WS_TICKET_PRUNE_INTERVAL_MS) {
+        this.wsTicketPrunedAt = now;
+        await this._pruneWsTickets(now);
+      }
+    } catch (e) {
+      console.warn('[ws-ticket] storage write failed:', e?.message || e);
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Cache-Control': 'no-store', 'Content-Type': 'application/json' }
+    });
+  }
+
+  /** 删掉超过保留期的登记记录。票据只有 60 秒寿命，保留 10 分钟绰绰有余。 */
+  async _pruneWsTickets(now) {
+    if (typeof this.state?.storage?.list !== 'function') return;
+    try {
+      const entries = await this.state.storage.list({
+        prefix: WS_TICKET_STORAGE_PREFIX,
+        limit: 512
+      });
+      const stale = [];
+      for (const [key, value] of entries) {
+        if (typeof value === 'number' && now - value > WS_TICKET_RETENTION_MS) stale.push(key);
+      }
+      if (stale.length > 0) await this.state.storage.delete(stale);
+    } catch (e) {
+      console.warn('[ws-ticket] prune failed:', e?.message || e);
+    }
+  }
+
   async _ackTrafficCorrection(serverId, data) {
     const ackRx = normalizeCorrectionValue(data.rx_correction);
     const ackTx = normalizeCorrectionValue(data.tx_correction);
@@ -1491,6 +1577,11 @@ export class MetricsBroadcaster {
 
     if (method === 'POST' && path === '/agent-config-changed') {
       return this._handleAgentConfigChanged(request);
+    }
+
+    // 前端短期连接票据的一次性登记（见 middleware/auth.js）。
+    if (method === 'POST' && path === '/ws-ticket/consume') {
+      return this._handleWsTicketConsume(request);
     }
 
     // ── 1) WebSocket 接入 ──────────────────────────────

@@ -7,7 +7,7 @@ import type {
   SysConfig,
   TrafficTrendSample,
 } from "@/types/cfsm";
-import { getServersSnapshot } from "@/services/api";
+import { getServersSnapshot, type ServersSnapshot } from "@/services/api";
 import {
   emptyNodeMetrics,
   isServerOnline,
@@ -562,12 +562,9 @@ async function performServersSync(refreshBases?: readonly string[]) {
 
   const controller = new AbortController();
   syncController = controller;
-  try {
-    const snapshot = await getServersSnapshot({
-      signal: controller.signal,
-      timeout: SERVERS_REQUEST_TIMEOUT_MS,
-      refreshBases,
-    });
+
+  /** 合并进状态。分阶段交付的中间快照与最终快照走的是同一条路径。 */
+  const applySnapshot = (snapshot: ServersSnapshot) => {
     if (controller.signal.aborted) return;
 
     const now = Date.now();
@@ -721,6 +718,29 @@ async function performServersSync(refreshBases?: readonly string[]) {
       );
     }
     if (sysConfigChanged) emitListeners(sysConfigListeners);
+  };
+
+  // 只在冷启动（本地还没有任何节点）时消费中间快照 —— 那时没有旧状态可被打乱；
+  // 热刷新时接受一份缺站的快照会让别的站点的卡片先消失再出现，不值得。
+  const coldStart = state.order.length === 0;
+  const handlePartial = coldStart
+    ? (partial: ServersSnapshot) => {
+        try {
+          applySnapshot(partial);
+        } catch (error) {
+          console.warn("[LuminaPlus] 应用分阶段快照失败，已忽略：", error);
+        }
+      }
+    : undefined;
+
+  try {
+    const snapshot = await getServersSnapshot({
+      signal: controller.signal,
+      timeout: SERVERS_REQUEST_TIMEOUT_MS,
+      refreshBases,
+      onSnapshot: handlePartial,
+    });
+    applySnapshot(snapshot);
   } catch (error) {
     if (!controller.signal.aborted) {
       nodeInfoError = true;
