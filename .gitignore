@@ -4,7 +4,7 @@ public/cf_probe.log
 public/cf_probe_config.json
 public/cf_probe_traffic.dat
 public/__pycache__/
-theme/
+/theme/
 public/config.json
 
 # 依赖
