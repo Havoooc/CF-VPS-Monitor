@@ -1,0 +1,138 @@
+# Dependabot 依赖升级策略
+#
+# 分组原则（四个生态统一）：
+#   - 小版本 / 补丁 → 合并成**一个** PR，降低噪音
+#   - 大版本        → 单独成组，破坏性变更需人工逐个评估
+#
+# 分组匹配按顺序命中：Dependabot 把每个更新分配给第一个 criteria 命中的 group，
+# 因此 *-minor-patch 必须排在 *-major 之前，二者靠 update-types 区分，不会重叠。
+#
+# 统一在北京时间每周一 09:00 提出，避免与工作日部署窗口冲突。
+version: 2
+
+updates:
+  # ── GitHub Actions ─────────────────────────────────────────────────────
+  # 6 个 workflow 共享同一批 Action（checkout / setup-go / setup-node /
+  # docker/* / upload-pages-artifact / deploy-pages / wrangler-action），
+  # 是本仓库最高频的上游漂移来源，也是分组策略的重点。
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      actions-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      actions-major:
+        patterns:
+          - "*"
+        update-types:
+          - major
+
+  # ── Go 探针依赖 (agent/go.mod) ─────────────────────────────────────────
+  - package-ecosystem: gomod
+    directory: /agent
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(agent)"
+    labels:
+      - dependencies
+      - go
+    groups:
+      go-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      go-major:
+        patterns:
+          - "*"
+        update-types:
+          - major
+
+  # ── 探针容器基础镜像 (agent/Dockerfile: alpine) ────────────────────────
+  - package-ecosystem: docker
+    directory: /agent
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(docker)"
+    labels:
+      - dependencies
+      - docker
+
+  # ── Worker 端依赖 (根 package.json) ────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(worker)"
+    labels:
+      - dependencies
+      - npm
+    groups:
+      worker-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      worker-major:
+        patterns:
+          - "*"
+        update-types:
+          - major
+
+  # ── 前端主题依赖 (themes/luminaplus/package.json) ──────────────────────
+  - package-ecosystem: npm
+    directory: /themes/luminaplus
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(theme)"
+    labels:
+      - dependencies
+      - npm
+    groups:
+      theme-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      theme-major:
+        patterns:
+          - "*"
+        update-types:
+          - major
