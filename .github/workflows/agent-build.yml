@@ -19,6 +19,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
       - name: Compile cf-probe
         working-directory: agent
         run: go build -trimpath -o "$RUNNER_TEMP/cf-probe" ./cmd/cf-probe
