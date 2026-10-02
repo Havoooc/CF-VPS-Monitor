@@ -1,0 +1,24 @@
+name: Build cf-probe Agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent/**'
+      - '.github/workflows/agent-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+      - name: Compile cf-probe
+        working-directory: agent
+        run: go build -trimpath -o "$RUNNER_TEMP/cf-probe" ./cmd/cf-probe
