@@ -179,6 +179,38 @@
   min-width: 0;
 }
 
+/* 大卡的指标图标块:与紧凑卡 gauge 图标同款(彩色圆角方块),颜色由 --metric-item-color 驱动。
+   用修饰类布局,.metric-item 基类保持原样(MiniNodeCard 的 MiniMetricBar 也在用)。 */
+.metric-item-tiled {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 4px 10px;
+  align-items: center;
+}
+
+.metric-item-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--metric-item-color) 16%, var(--border-subtle));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--metric-item-color) 12%, var(--fill-tertiary));
+  color: var(--metric-item-color);
+}
+
+.metric-item-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.metric-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
 .metric-detail {
   display: inline-flex;
   width: fit-content;
