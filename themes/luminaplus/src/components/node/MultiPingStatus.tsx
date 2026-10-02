@@ -3,7 +3,6 @@ import { clsx } from "clsx";
 import { useMetricColorsVersion } from "@/hooks/useMetricColors";
 import { usePreferences } from "@/hooks/usePreferences";
 import type { HomepagePingDisplayLine, ReturnRoute } from "@/types/cfsm";
-import { CARRIER_TASK_BY_ID } from "@/services/cfsm/mappers";
 import { latencyHeatColor, lossHeatColor } from "@/utils/metricTone";
 import {
   RETURN_ROUTE_QUALITY_LABEL,
@@ -24,36 +23,17 @@ const CompactMultiPingRow = memo(function CompactMultiPingRow({
   slot,
   line,
   redrawKey,
-  returnRoute,
 }: {
   uuid: string;
   slot: number;
   line: HomepagePingDisplayLine;
   redrawKey: string;
-  returnRoute?: ReturnRoute;
 }) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const isLoading = line.loadState === "pending";
   const isError = line.loadState === "error";
   const latencyColor = latencyHeatColor(line.lastValue);
   const lossColor = lossHeatColor(line.loss);
-  const carrierKey = returnRouteCarrierKey(line.taskId);
-  const routeLabel = carrierKey && returnRoute ? returnRoute[carrierKey]?.trim() || undefined : undefined;
-  const routeQuality = routeLabel ? classifyReturnRoute(routeLabel) : undefined;
-  const routeConfidence = carrierKey && returnRoute
-    ? (returnRoute.confidence as Record<string, string> | undefined)?.[carrierKey]
-    : undefined;
-  const routeReason = carrierKey && returnRoute
-    ? (returnRoute.reason as Record<string, string> | undefined)?.[carrierKey]
-    : undefined;
-  const routeTitle = routeLabel && routeQuality
-    ? returnRouteTitle(routeLabel, routeQuality, {
-        carrierKey,
-        confidence: routeConfidence,
-        reason: routeReason,
-        probedAt: typeof returnRoute?.probed_at === "string" ? returnRoute.probed_at : undefined,
-      })
-    : undefined;
   const hoveredBucket = hoveredIndex == null ? null : (line.buckets[hoveredIndex] ?? null);
   const tooltip = hoveredBucket
     ? `${formatHealthBucketTooltip(hoveredBucket, "latency")} · 丢包 ${formatHealthBucketTooltip(hoveredBucket, "loss")}`
@@ -74,17 +54,6 @@ const CompactMultiPingRow = memo(function CompactMultiPingRow({
       <div className="compact-ping-summary">
         <span className="compact-ping-name-group">
           <PingLineSwitcher uuid={uuid} slot={slot} taskName={line.taskName} />
-          {routeLabel && routeQuality && (
-            <span
-              className={clsx("multi-ping-route-badge", `is-${routeQuality}`, routeConfidence === "stale" && "is-stale")}
-              title={routeTitle}
-              aria-label={routeTitle?.replace("：", " ")}
-            >
-              <span>{routeLabel}</span>
-              <span className="multi-ping-route-separator" aria-hidden="true">·</span>
-              <span className="multi-ping-route-quality">{RETURN_ROUTE_QUALITY_LABEL[routeQuality]}</span>
-            </span>
-          )}
         </span>
         <span className="compact-ping-current-value" style={{ color: line.lastValue == null ? "var(--text-tertiary)" : latencyColor }}>
           <small>延迟</small>{latencyText}
@@ -113,7 +82,6 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
   metric,
   density,
   redrawKey,
-  returnRoute,
 }: {
   uuid: string;
   slot: number;
@@ -121,7 +89,6 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
   metric: MultiPingMetric;
   density: MultiPingStatusDensity;
   redrawKey: string;
-  returnRoute?: ReturnRoute;
 }) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const latencyColor = latencyHeatColor(line.lastValue);
@@ -155,28 +122,6 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
   const valueColor = metric === "latency" ? latencyColor : lossColor;
   const unit = metric === "latency" ? "ms" : "%";
   const waiting = isLoading && value == null;
-  const carrierKey = metric === "latency" ? returnRouteCarrierKey(line.taskId) : undefined;
-  const routeLabel =
-    carrierKey && returnRoute ? returnRoute[carrierKey]?.trim() || undefined : undefined;
-  const routeQuality = routeLabel ? classifyReturnRoute(routeLabel) : undefined;
-  const routeConfidence =
-    carrierKey && returnRoute
-      ? (returnRoute.confidence as Record<string, string> | undefined)?.[carrierKey]
-      : undefined;
-  const isRouteStale = routeConfidence === "stale";
-  const routeReason =
-    carrierKey && returnRoute
-      ? (returnRoute.reason as Record<string, string> | undefined)?.[carrierKey]
-      : undefined;
-  const routeTitle =
-    routeLabel && routeQuality
-      ? returnRouteTitle(routeLabel, routeQuality, {
-          carrierKey,
-          confidence: routeConfidence,
-          reason: routeReason,
-          probedAt: typeof returnRoute?.probed_at === "string" ? returnRoute.probed_at : undefined,
-        })
-      : undefined;
   const displayValue =
     waiting
       ? "..."
@@ -204,25 +149,6 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
         {metric === "latency" && (
           <span className="multi-ping-name-group">
             <PingLineSwitcher uuid={uuid} slot={slot} taskName={line.taskName} />
-            {routeLabel && routeQuality && (
-              <span
-                className={clsx(
-                  "multi-ping-route-badge",
-                  `is-${routeQuality}`,
-                  isRouteStale && "is-stale"
-                )}
-                title={routeTitle}
-                aria-label={routeTitle?.replace("：", " ")}
-              >
-                <span>{routeLabel}</span>
-                <span className="multi-ping-route-separator" aria-hidden="true">
-                  ·
-                </span>
-                <span className="multi-ping-route-quality">
-                  {RETURN_ROUTE_QUALITY_LABEL[routeQuality]}
-                </span>
-              </span>
-            )}
           </span>
         )}
         <strong
@@ -267,14 +193,12 @@ const MultiPingMetricColumn = memo(function MultiPingMetricColumn({
   metric,
   density,
   redrawKey,
-  returnRoute,
 }: {
   uuid: string;
   lines: HomepagePingDisplayLine[];
   metric: MultiPingMetric;
   density: MultiPingStatusDensity;
   redrawKey: string;
-  returnRoute?: ReturnRoute;
 }) {
   return (
     <div
@@ -292,7 +216,6 @@ const MultiPingMetricColumn = memo(function MultiPingMetricColumn({
           metric={metric}
           density={density}
           redrawKey={redrawKey}
-          returnRoute={returnRoute}
         />
       ))}
     </div>
@@ -336,25 +259,71 @@ export const MultiPingStatus = memo(function MultiPingStatus({
                 slot={slot}
                 line={line}
                 redrawKey={redrawKey}
-                returnRoute={returnRoute}
               />
             ))}
           </div>
+          <ReturnRouteSummary returnRoute={returnRoute} />
         </div>
       ) : (
-        <div className="multi-ping-columns">
-          <MultiPingMetricColumn uuid={uuid} lines={lines} metric="latency" density={density} redrawKey={redrawKey} returnRoute={returnRoute} />
-          <MultiPingMetricColumn uuid={uuid} lines={lines} metric="loss" density={density} redrawKey={redrawKey} returnRoute={returnRoute} />
-        </div>
+        <>
+          <div className="multi-ping-columns">
+            <MultiPingMetricColumn uuid={uuid} lines={lines} metric="latency" density={density} redrawKey={redrawKey} />
+            <MultiPingMetricColumn uuid={uuid} lines={lines} metric="loss" density={density} redrawKey={redrawKey} />
+          </div>
+          <ReturnRouteSummary returnRoute={returnRoute} />
+        </>
       )}
     </div>
   );
 });
 
-function returnRouteCarrierKey(taskId: number): "telecom" | "unicom" | "mobile" | undefined {
-  const key = CARRIER_TASK_BY_ID.get(taskId)?.key;
-  if (key === "ct") return "telecom";
-  if (key === "cu") return "unicom";
-  if (key === "cm") return "mobile";
-  return undefined;
+const RETURN_ROUTE_CARRIERS = [
+  { key: "telecom", label: "电信" },
+  { key: "unicom", label: "联通" },
+  { key: "mobile", label: "移动" },
+] as const;
+
+function ReturnRouteSummary({ returnRoute }: { returnRoute?: ReturnRoute }) {
+  if (!returnRoute) return null;
+
+  const entries = RETURN_ROUTE_CARRIERS.flatMap(({ key, label }) => {
+    const routeLabel = returnRoute[key]?.trim();
+    if (!routeLabel) return [];
+    const quality = classifyReturnRoute(routeLabel);
+    const confidence = (returnRoute.confidence as Record<string, string> | undefined)?.[key];
+    const reason = (returnRoute.reason as Record<string, string> | undefined)?.[key];
+    const title = returnRouteTitle(routeLabel, quality, {
+      carrierKey: key,
+      confidence,
+      reason,
+      probedAt: typeof returnRoute.probed_at === "string" ? returnRoute.probed_at : undefined,
+    });
+    return [{ key, label, routeLabel, quality, confidence, title }];
+  });
+
+  if (entries.length === 0) return null;
+
+  return (
+    <section className="return-route-summary" aria-label="三网回程线路">
+      <div className="return-route-summary-heading">回程线路</div>
+      <div className="return-route-summary-grid">
+        {entries.map(({ key, label, routeLabel, quality, confidence, title }) => (
+          <div className="return-route-summary-item" key={key} title={title}>
+            <span className="return-route-summary-carrier">{label}</span>
+            <span
+              className={clsx(
+                "return-route-summary-badge",
+                `is-${quality}`,
+                confidence === "stale" && "is-stale",
+              )}
+            >
+              <span className="return-route-summary-name">{routeLabel}</span>
+              <span aria-hidden="true">·</span>
+              <span>{RETURN_ROUTE_QUALITY_LABEL[quality]}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
