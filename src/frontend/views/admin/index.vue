@@ -1805,11 +1805,6 @@ const addServer = async () => {
   }
 }
 
-const getInstallCommand = (serverId) => {
-  const HOST = selectedApiBase.value
-  return `curl -sL ${HOST}/install.sh | bash -s install -id=${serverId} -secret='${apiSecret.value}' -url=${HOST}/update`
-}
-
 const resolveServerPingNode = (server, field) => {
   const value = server?.[field]
   const explicitEmpty = value === 0 || value === '0'

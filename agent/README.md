@@ -43,7 +43,7 @@ Windows 上如果安装时开启 `-auto_update=1`，自动更新会下载并执�
 默认安装最新 release。需要指定版本时：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Havoooc/CF-VPS-Monitor/main/agent/install.sh | sh -s -- install --install-version=v1.0.10 -id=SERVER_ID -secret=SECRET -url=WORKER_URL
+curl -fsSL https://raw.githubusercontent.com/Havoooc/CF-VPS-Monitor/main/agent/install.sh | sh -s -- install --install-version=v1.3.8 -id=SERVER_ID -secret=SECRET -url=WORKER_URL
 ```
 
 GitHub 下载较慢时，可以配置代理前缀：
@@ -497,7 +497,7 @@ docker buildx build --platform linux/amd64,linux/arm64 -t cf-vps-monitor:local -
 
 ## 从源码构建
 
-需要 Go `1.24` 或更新版本。
+需要 `agent/go.mod` 里声明的 Go 版本或更新版本（当前为 `1.26.8`），CI 也直接以该文件为准。
 
 ```bash
 git clone https://github.com/Havoooc/CF-VPS-Monitor.git
@@ -522,6 +522,18 @@ go build -trimpath -ldflags "-s -w -X main.version=$(git describe --tags --alway
 ```bash
 ./cf-probe help
 ```
+
+## 关于仓库里的三个安装脚本
+
+只有第一个是当前入口：
+
+| 文件 | 用途 |
+| --- | --- |
+| `agent/install.sh` / `agent/install.ps1` | **当前入口**。下载本仓库 release 里的 `cf-probe` 二进制并安装为服务 |
+| `agent/install-old.sh` | 已停止维护的 Shell 版探针安装脚本，仅供存档。内容与线上分发的 `public/install.sh` 逐字节相同（`md5` 一致），迁移期间留一份在仓库里可追溯 |
+| `public/install*.sh` / `public/*.ps1` | 随 Worker 分发，**只用于卸载历史 Shell / PowerShell 安装**，见主 README 的「卸载」小节 |
+
+Shell / PowerShell 版已不再维护，新装一律走 Go 版；把 `agent/install-old.sh` 当安装入口用，会装出一个不再更新的探针。
 
 ## 致谢
 
