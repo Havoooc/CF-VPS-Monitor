@@ -278,8 +278,9 @@ function NodeMetricSection({
       />
       <MetricBar
         icon={<Gauge size={13} strokeWidth={2} />}
-        label="负载"
+        label="负载 · 1 分钟"
         valueText={node.load1.toFixed(2)}
+        detailText={`5 分 ${node.load5.toFixed(2)} · 15 分 ${node.load15.toFixed(2)}`}
         fraction={loadFraction}
         redrawKey={redrawKey}
         paint="var(--progress-load)"
