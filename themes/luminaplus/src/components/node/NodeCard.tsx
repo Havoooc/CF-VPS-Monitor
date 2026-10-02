@@ -5,7 +5,6 @@ import {
   Gauge,
   MemoryStick,
   HardDrive,
-  Globe,
   ArrowDown,
   ArrowUp,
   Clock3,
@@ -313,11 +312,19 @@ function NodeTrafficSection({
 
   return (
     <div className="card-metric-section server-traffic-section">
+      <div className="traffic-section-heading">
+        <span>网络流量</span>
+        <span className="traffic-stat-live" data-live={isOnline ? "true" : "false"}>
+          <span className="traffic-stat-live-dot" style={{ background: isOnline ? "var(--traffic-down)" : "var(--status-offline)" }} />
+          {isOnline ? "实时速率" : "离线"}
+        </span>
+      </div>
       <TrafficStat
         direction="上行"
         totalLabel="出站"
         rate={upRate}
         total={formatBytes(upTotal)}
+        monthly={node.trafficUpMonthly != null}
         samples={trafficTrend.up}
         live={isOnline}
         active={node.netUp > 0}
@@ -330,6 +337,7 @@ function NodeTrafficSection({
         totalLabel="入站"
         rate={downRate}
         total={formatBytes(downTotal)}
+        monthly={node.trafficDownMonthly != null}
         samples={trafficTrend.down}
         live={isOnline}
         active={node.netDown > 0}
@@ -704,6 +712,7 @@ function TrafficStat({
   totalLabel,
   rate,
   total,
+  monthly,
   samples,
   live,
   active,
@@ -715,6 +724,7 @@ function TrafficStat({
   totalLabel: "入站" | "出站";
   rate: ByteRateDisplay;
   total: string;
+  monthly: boolean;
   samples: TrafficTrendSample[];
   live: boolean;
   active: boolean;
@@ -729,34 +739,19 @@ function TrafficStat({
       <div className="traffic-stat-head">
         <div className="traffic-stat-label">
           <span style={{ color }}>{icon}</span>
-          <span style={{ color: speedColor }}>{direction}</span>
+          <span>{direction}</span>
         </div>
         <span className="traffic-stat-value tabular" style={{ color: speedColor }}>
           {rate.value}
           <span className="traffic-stat-unit">{rate.unit}</span>
         </span>
       </div>
-      <div className="traffic-stat-trend">
+      <div className="traffic-stat-trend" aria-label={live ? (active ? "流量趋势" : "当前空闲") : "离线流量趋势"}>
         <TrafficDotStrip samples={samples} color={speedColor} redrawKey={redrawKey} />
-        <span
-          className="traffic-stat-live"
-          data-live={live ? "true" : "false"}
-          title={live ? (active ? "实时" : "空闲") : "离线"}
-          aria-label={live ? (active ? "实时" : "空闲") : "离线"}
-        >
-          <span
-            className="traffic-stat-live-dot"
-            style={{
-              background: speedColor,
-            }}
-          />
-          {live && <span>{active ? "实时" : "空闲"}</span>}
-        </span>
       </div>
       <div className="traffic-stat-foot">
         <div className="traffic-stat-total-label">
-          <GlobeArrow direction={totalLabel} color={color} />
-          <span>{totalLabel}</span>
+          <span>{monthly ? "本月" : "累计"}{totalLabel}</span>
         </div>
         <span className="tabular">{total}</span>
       </div>
@@ -815,42 +810,6 @@ function TrafficDotStrip({
       redrawKey={redrawKey}
       draw={draw}
     />
-  );
-}
-
-function GlobeArrow({
-  direction,
-  color,
-}: {
-  direction: "入站" | "出站";
-  color: string;
-}) {
-  const isInbound = direction === "入站";
-  return (
-    <span
-      className="relative inline-flex items-center justify-center"
-      style={{
-        width: 18,
-        height: 18,
-        color,
-      }}
-      aria-hidden
-    >
-      <Globe size={15} strokeWidth={1.9} />
-      {isInbound ? (
-        <ArrowDown
-          size={9}
-          strokeWidth={2.4}
-          className="absolute -right-[2px] bottom-[-1px]"
-        />
-      ) : (
-        <ArrowUp
-          size={9}
-          strokeWidth={2.4}
-          className="absolute -right-[2px] bottom-[-1px]"
-        />
-      )}
-    </span>
   );
 }
 

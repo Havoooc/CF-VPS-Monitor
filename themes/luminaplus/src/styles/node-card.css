@@ -931,3 +931,51 @@
     gap: 12px;
   }
 }
+
+
+/* Network summary: one shared live label, two aligned direction columns. */
+.server-traffic-section {
+  gap: 10px 20px;
+}
+.traffic-section-heading {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+.traffic-stat {
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-elev) 42%, transparent);
+}
+.traffic-stat-head {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.traffic-stat-value {
+  margin-left: auto;
+  font-size: clamp(18px, 2vw, 22px);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.traffic-stat-trend {
+  opacity: 0.75;
+}
+.traffic-stat-foot {
+  gap: 6px;
+  font-size: 11px;
+}
+.traffic-stat-foot > .tabular {
+  color: var(--text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+@media (max-width: 420px) {
+  .server-traffic-section { column-gap: 10px; }
+  .traffic-stat { padding: 10px 8px; }
+}
