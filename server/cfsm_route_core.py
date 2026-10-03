@@ -63,7 +63,8 @@ def merge_candidate(record, carrier, candidate, stamp):
     ranks = {'standard': 0, 'good': 1, 'excellent': 2}
     downgrade = ranks[quality(new_type)] < ranks[quality(old_type)]
     uncertain_change = candidate.get('confidence') != 'high'
-    if old and old != route and (downgrade or uncertain_change):
+    unknown_old = str(old or '').strip() in {'国际段未知', '未识别', '未检测', '未知', '—', '-'}
+    if old and not unknown_old and old != route and (downgrade or uncertain_change):
         same_value = previous.get('pending_value') == route
         day = stamp[:10]
         count = previous.get('pending_count', 0) if same_value and previous.get('pending_day') == day else (previous.get('pending_count', 0) + 1 if same_value else 1)
