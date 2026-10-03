@@ -15,6 +15,7 @@ import { AppError, createSuccessResponse, createBadRequestResponse, createNotFou
 import { verifyTurnstileToken } from './utils/common.js';
 import { getCorsAllowedOrigins, createOptionsResponse, applyCors } from './utils/cors.js';
 import { getRemoteVersion, getCachedRemoteVersion } from './utils/version.js';
+import { startDailyRouteScan, pollDailyRouteScan } from './utils/dailyRouteScan.js';
 import {
   HISTORY_ALL_QUERY_COLUMNS
 } from './utils/historyFields.js';
@@ -365,6 +366,15 @@ export default {
         debug('[Cron] 开始执行资源负载告警检测');
         await checkResourceAlerts(env);
         debug('[Cron] 资源负载告警检测完成');
+      }
+      try { await pollDailyRouteScan(env.DB, now); }
+      catch (error) { console.error('[Cron] 每日三网去程探测轮询失败:', error); }
+    } else if (cron === '5 3 * * *') {
+      try {
+        const result = await startDailyRouteScan(env.DB, now);
+        debug(`[Cron] 每日三网去程探测已启动: ${JSON.stringify(result)}`);
+      } catch (error) {
+        console.error('[Cron] 每日三网去程探测启动失败:', error);
       }
     } else if (cron === '0 * * * *') {
       if (day === 0 && hour === 0) {

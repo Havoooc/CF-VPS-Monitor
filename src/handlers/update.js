@@ -12,6 +12,7 @@ import { createErrorResponse, createUnauthorizedResponse, createNotFoundResponse
 import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { getResourceAlertConfig, getWssReportScheduleState, isWssReportConfigured, loadSiteSettings, normalizeBooleanSetting } from '../utils/settings.js';
 import { sendNotification } from '../services/notification.js';
+import { getMeasuredReturnRoutes, saveMeasuredReturnRoutes } from '../utils/measuredReturnRoutes.js';
 import { cacheLatestReportUpdate } from '../utils/latestReportCache.js';
 import {
   hasRecentFrontendRealtimeActivity,
@@ -660,6 +661,23 @@ export async function handleUpdate(request, env, ctx) {
           .run();
         serverDetail.return_route = serializedRoute;
         patchServerDetailCache(id, { return_route: serializedRoute });
+      }
+    }
+    const returnRouteV6 = normalizeReturnRoute(latestMetrics.return_route_ipv6);
+    if (returnRouteV6) {
+      const allRoutes = await getMeasuredReturnRoutes(env.DB);
+      const routes = allRoutes[id] || { ipv4: {}, ipv6: {} };
+      const nextRoute = {
+        telecom: returnRouteV6.telecom,
+        unicom: returnRouteV6.unicom,
+        mobile: returnRouteV6.mobile,
+        ...(returnRouteV6.region ? { region: returnRouteV6.region } : {}),
+        source: '服务器每日 IPv6 回程探针',
+        ...(returnRouteV6.probed_at ? { probed_at: returnRouteV6.probed_at } : {})
+      };
+      if (JSON.stringify(routes.ipv6 || {}) !== JSON.stringify(nextRoute)) {
+        routes.ipv6 = nextRoute;
+        await saveMeasuredReturnRoutes(env.DB, id, routes);
       }
     }
     await saveMetricsHistory(

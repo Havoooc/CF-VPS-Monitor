@@ -3,7 +3,7 @@ import { getForwardRoutes } from '../utils/forwardRoutes.js';
 import { checkAuth, simpleAuthResponse } from '../middleware/auth.js';
 import { getDashboardLatencyHistory, getLatestMetrics, getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, getServerDetail } from '../utils/cache.js';
-import { mergeMetricsIntoServer, coerceNumericMetricFields } from '../utils/metrics.js';
+import { mergeMetricsIntoServer, coerceNumericMetricFields, normalizeReturnRoute } from '../utils/metrics.js';
 import { normalizeLongHistoryPoints } from '../utils/settings.js';
 import { createSuccessResponse, createBadRequestResponse, createNotFoundResponse } from '../utils/errors.js';
 import {
@@ -202,7 +202,9 @@ export async function handleServerAPI(request, env, sys) {
   ]);
   mergeMetricsIntoServer(server, latestMetrics);
   server.forward_routes = (await getForwardRoutes(env.DB))[id];
-  server.return_routes = (await getMeasuredReturnRoutes(env.DB))[id];
+  server.return_routes = (await getMeasuredReturnRoutes(env.DB))[id] || { ipv4: {}, ipv6: {} };
+  const liveReturnRoute = normalizeReturnRoute(server.return_route);
+  if (liveReturnRoute) server.return_routes.ipv4 = { ...liveReturnRoute, source: '服务器定时回程探针' };
   server.latestReportUpdates = realtimeState.latestReportUpdates;
   server.sysConfig = {
     long_history_points: Number(normalizeLongHistoryPoints(sys.long_history_points))
@@ -224,7 +226,9 @@ export async function handleServersAPI(request, env, sys) {
   const returnRoutes = await getMeasuredReturnRoutes(env.DB);
   for (const server of results) {
     server.forward_routes = forwardRoutes[server.id];
-    server.return_routes = returnRoutes[server.id];
+    server.return_routes = returnRoutes[server.id] || { ipv4: {}, ipv6: {} };
+    const liveReturnRoute = normalizeReturnRoute(server.return_route);
+    if (liveReturnRoute) server.return_routes.ipv4 = { ...liveReturnRoute, source: '服务器定时回程探针' };
   }
   const shouldIncludeLatencyHistory = sys.show_three_net_details === 'true';
   
