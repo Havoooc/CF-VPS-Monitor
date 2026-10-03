@@ -24,8 +24,7 @@ export function classifyReturnRoute(label: string): ReturnRouteQuality {
     return "excellent";
   }
   if (
-    normalized.includes("CN2GIA") ||
-    normalized === "CN2" ||
+    normalized.includes("CN2") ||
     normalized.includes("9929") ||
     normalized.includes("CMIN2")
   ) {
