@@ -18,14 +18,14 @@ export function RouteSummary({ returnRoute, forwardRoutes, returnRoutes }: { ret
   function routeCell(route: ReturnRoute | undefined, key: "telecom" | "unicom" | "mobile", manual: boolean) {
     const name = route?.[key]?.trim();
     if (!name) return <span className="route-pending">待检测</span>;
-    const incomplete = /未完整|未知|未确认/.test(name);
-    const quality = incomplete ? "standard" : classifyReturnRoute(name);
+    const displayName = name.replace(/\s*[·,，]?\s*未完整/g, "").replace(/\s*[·,，]?\s*Cox 未确认/g, "").replace(/国际段未知/g, "—").trim();
+    const quality = classifyReturnRoute(displayName);
     const time = typeof route?.probed_at === "string" ? route.probed_at : "";
     const region = typeof route?.region === "string" ? route.region : "未记录";
     const source = typeof route?.source === "string" ? route.source : (manual ? "未记录" : "服务器探针");
-    const title = incomplete ? `${name}；探测未完整，不能据此判断不通` : returnRouteTitle(name, quality, { carrierKey: key, probedAt: time || undefined });
+    const title = returnRouteTitle(displayName, quality, { carrierKey: key, probedAt: time || undefined });
     return <details className="route-cell">
-      <summary title={title}><span className={clsx("return-route-summary-badge", `is-${quality}`)}>{name}</span></summary>
+      <summary title={title}><span className={clsx("return-route-summary-badge", `is-${quality}`)}>{displayName}</span></summary>
       <div className="route-cell-details">
         <div>{/^(TCPTest|NextTrace)/.test(source) ? "测量记录" : (manual ? "手动记录" : "探针检测")}</div>
         <div>地点：{region}</div>
