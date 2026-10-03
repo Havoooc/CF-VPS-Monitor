@@ -1,3 +1,4 @@
+import { persistRouteReport } from "../services/routes.js";
 import { saveMetricsHistory } from '../database/schema.js';
 import { getServerDetail, clearServerDetailCache, patchServerDetailCache } from '../utils/cache.js';
 import { evaluateTrafficAlert } from '../services/notification.js';
@@ -12,8 +13,6 @@ import { createErrorResponse, createUnauthorizedResponse, createNotFoundResponse
 import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { getResourceAlertConfig, getWssReportScheduleState, isWssReportConfigured, loadSiteSettings, normalizeBooleanSetting } from '../utils/settings.js';
 import { sendNotification } from '../services/notification.js';
-import { getMeasuredReturnRoutes, saveMeasuredReturnRoutes } from '../utils/measuredReturnRoutes.js';
-import { getForwardRoutes, normalizeForwardRoutes, saveForwardRoutes } from '../utils/forwardRoutes.js';
 import { cacheLatestReportUpdate } from '../utils/latestReportCache.js';
 import {
   hasRecentFrontendRealtimeActivity,
@@ -39,43 +38,6 @@ import {
   UPDATE_REALTIME_BATCH_WINDOW_MS,
   UPDATE_RESOURCE_ALERT_BATCH_WINDOW_MS
 } from '../utils/config.js';
-
-export async function persistRouteSnapshots(db, id, latestMetrics) {
-    const returnRouteV6 = normalizeReturnRoute(latestMetrics.return_route_ipv6);
-    if (returnRouteV6) {
-      const allRoutes = await getMeasuredReturnRoutes(db);
-      const routes = allRoutes[id] || { ipv4: {}, ipv6: {} };
-      const nextRoute = {
-        telecom: returnRouteV6.telecom,
-        unicom: returnRouteV6.unicom,
-        mobile: returnRouteV6.mobile,
-        ...(returnRouteV6.region ? { region: returnRouteV6.region } : {}),
-        source: '服务器每日 IPv6 回程探针',
-        ...(returnRouteV6.probed_at ? { probed_at: returnRouteV6.probed_at } : {})
-      };
-      if (JSON.stringify(routes.ipv6 || {}) !== JSON.stringify(nextRoute)) {
-        routes.ipv6 = nextRoute;
-        await saveMeasuredReturnRoutes(db, id, routes);
-      }
-    }
-    if (latestMetrics.forward_routes && typeof latestMetrics.forward_routes === 'object') {
-      try {
-        const incoming = normalizeForwardRoutes(latestMetrics.forward_routes);
-        const hasRoutes = ['ipv4', 'ipv6'].some(family => ['telecom', 'unicom', 'mobile'].some(carrier => incoming[family][carrier]));
-        if (hasRoutes) {
-          const allForwardRoutes = await getForwardRoutes(db);
-          const previous = allForwardRoutes[id] || { ipv4: {}, ipv6: {} };
-          const next = {
-            ipv4: { ...previous.ipv4, ...incoming.ipv4 },
-            ipv6: { ...previous.ipv6, ...incoming.ipv6 }
-          };
-          if (JSON.stringify(previous) !== JSON.stringify(next)) await saveForwardRoutes(db, id, next);
-        }
-      } catch (error) {
-        console.warn('[Update] 忽略无效的去程线路上报:', error?.message || error);
-      }
-    }
-}
 
 // 将最新一次上报打包成前端可直接消费的 "当前状态" 对象
 // 与 /api/server 和 /api/servers 返回的字段保持一致，便于页面直接合并
@@ -647,61 +609,7 @@ export async function handleUpdate(request, env, ctx) {
     const latestSample = samples[samples.length - 1];
     const latestMetrics = getReportMetrics(data, latestSample);
     const historyMetrics = getHistoryMetrics(data, samples, latestSample);
-    // 回程线路：白名单校验 + 仅在值发生变化时写库。
-    //
-    // 校验失败时直接跳过，保留数据库里已有的值——探针在本地缓存文件缺失时
-    // 会回落成 `{}`（cf-probe.sh:1144），旧实现会把面板上的线路清空。
-    // 服务器详情已在本次请求开头读取，直接比较规范化值，避免每个心跳都执行
-    // 一次 no-op UPDATE；首次补值或路线字段实际变化时仍写库。
-    const returnRoute = normalizeReturnRoute(latestMetrics.return_route);
-    if (returnRoute) {
-      const serializedRoute = JSON.stringify(returnRoute);
-      const oldRoute = normalizeReturnRoute(serverDetail.return_route);
-      if (oldRoute) {
-        const changes = [];
-        const carrierMap = [["telecom", "电信"], ["unicom", "联通"], ["mobile", "移动"]];
-        for (const [key, label] of carrierMap) {
-          if (oldRoute[key] && returnRoute[key] && oldRoute[key] !== returnRoute[key]) {
-            changes.push({
-              carrier: label,
-              from: oldRoute[key],
-              to: returnRoute[key]
-            });
-          }
-        }
-        if (changes.length > 0) {
-          ctx.waitUntil((async () => {
-            try {
-              const settings = await loadSiteSettings(env.DB);
-              const changeList = changes.map(c => `${c.carrier}：${c.from} ➔ ${c.to}`).join('\n');
-              const serverName = serverDetail.name || id;
-              await sendNotification(settings, changeList, {
-                event: '回程线路异动告警',
-                emoji: '🔀',
-                client: serverName,
-                clients: [serverName],
-                count: changes.length,
-                message: `服务器【${serverName}】三网回程线路发生变更：\n${changeList}`
-              });
-            } catch (err) {
-              console.error('[Notification] 线路异动通知失败:', err);
-            }
-          })());
-        }
-      }
-
-      const oldSerializedRoute = oldRoute ? JSON.stringify(oldRoute) : '';
-      if (oldSerializedRoute !== serializedRoute) {
-        await env.DB.prepare(
-          "UPDATE servers SET return_route = ? WHERE id = ? AND COALESCE(return_route, '') <> ?"
-        )
-          .bind(serializedRoute, id, serializedRoute)
-          .run();
-        serverDetail.return_route = serializedRoute;
-        patchServerDetailCache(id, { return_route: serializedRoute });
-      }
-    }
-    await persistRouteSnapshots(env.DB, id, latestMetrics);
+    await persistRouteReport(env, id, latestMetrics, serverDetail, ctx);
     await saveMetricsHistory(
       env.DB,
       id,

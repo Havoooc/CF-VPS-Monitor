@@ -30,7 +30,7 @@ export function classifyReturnRoute(label: string): ReturnRouteQuality {
   ) {
     return "excellent";
   }
-  if (normalized.includes("10099") || normalized === "CMI") {
+  if (normalized.includes("10099") || /(^|[^A-Z0-9])CMI([^A-Z0-9]|$)/.test(normalized)) {
     return "good";
   }
   return "standard";

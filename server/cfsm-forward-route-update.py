@@ -10,6 +10,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
+from cfsm_route_core import route_type, merge_candidate
 
 API = "https://www.tcptest.cn/api/v2"
 BASE = Path("/var/lib/cfsm-forward-route")
@@ -70,13 +71,22 @@ def create_task(task):
 
 
 def summarize(result, carrier):
-    hops = (result.get("data") or {}).get("hops")
+    if result.get("success") is not True:
+        return None
+    data = result.get("data") or {}
+    hops = data.get("hops")
     if not isinstance(hops, list):
-        return ""
-    labels = []
+        return None
+    labels, asns = [], set()
+    cn2_prefix = False
+    # Explicit international/transit evidence; domestic access ASNs do not qualify.
+    international = {"4809", "9929", "10099", "58807", "58453", *TRANSIT_LABELS,
+                     "21859", "7578", "137409", "136510"}
     for hop in hops:
-        asn = str(hop.get("asn") or "").removeprefix("AS")
+        asn = str(hop.get("asn") or "").upper().removeprefix("AS")
+        asns.add(asn)
         if carrier == "telecom" and str(hop.get("ip") or "").startswith("59.43."):
+            cn2_prefix = True
             label = "CN2"
         elif asn:
             label = AS_LABELS[carrier].get(asn, TRANSIT_LABELS.get(asn, f"AS{asn}"))
@@ -84,9 +94,11 @@ def summarize(result, carrier):
             continue
         if labels[-1:] != [label]:
             labels.append(label)
-    if len(labels) == 1 and labels[0] in {"163", "CT", "4837", "CMI"}:
-        return ""  # A domestic-only response does not identify the international path.
-    return " → ".join(labels)[:160]
+    kind = route_type(carrier, asns, cn2_prefix)
+    if not labels or not kind or not (asns & international or cn2_prefix):
+        return None
+    return {"route": " → ".join(labels)[:160], "route_type": kind,
+            "confidence": "medium", "reason": "observed backbone/transit ASN evidence"}
 
 
 def poll_task(task):
@@ -95,8 +107,8 @@ def poll_task(task):
         final = next((item for item in response.get("results", []) if item.get("final")), None)
         if final is None:
             return None
-        route = summarize(final, task["carrier"])
-        return {**task, "route": route} if route else {**task, "route": ""}
+        candidate = summarize(final, task["carrier"])
+        return {**task, "candidate": candidate}
     except Exception:
         return None
 
@@ -162,23 +174,36 @@ def main():
             if pending:
                 time.sleep(8)
 
+        retry_tasks = [{k: v for k, v in task.items() if k != "task_id"}
+                       for task in created if not any(item["task_id"] == task["task_id"] and item.get("candidate") for item in results)]
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            retries = [task for task in pool.map(create_task, retry_tasks) if task]
+        retry_pending = {task["task_id"]: task for task in retries}
+        retry_deadline = time.monotonic() + 120
+        while retry_pending and time.monotonic() < retry_deadline:
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                finished = list(pool.map(poll_task, list(retry_pending.values())))
+            for item in finished:
+                if item:
+                    # Replace the first failed observation, never count a retry as a new daily confirmation.
+                    results = [r for r in results if (r["family"], r["carrier"]) != (item["family"], item["carrier"])]
+                    results.append(item)
+                    retry_pending.pop(item["task_id"], None)
+            if retry_pending:
+                time.sleep(8)
+
         try:
             cached = json.loads(OUTPUT.read_text(encoding="utf-8"))
         except Exception:
             cached = {"ipv4": {}, "ipv6": {}}
         stamp = datetime.now(timezone.utc).isoformat()
         changed = 0
-        for item in results:
-            if not item["route"]:
-                continue
-            family = cached.setdefault(item["family"], {})
-            family[item["carrier"]] = item["route"]
-            family["region"] = "浙江温州第三方探测点"
-            family["source"] = "TCPTest 每日自动路由探测"
-            family["probed_at"] = stamp
-            changed += 1
-        if changed:
-            atomic_save(cached)
+        by_key = {(item["family"], item["carrier"]): item.get("candidate") for item in results}
+        for task in tasks:
+            family = cached.setdefault(task["family"], {})
+            changed += merge_candidate(family, task["carrier"], by_key.get((task["family"], task["carrier"])), stamp)
+            family.update(region="浙江温州第三方探测点", source="TCPTest 每日自动路由探测", last_attempt_at=stamp)
+        atomic_save(cached)
         log(f"FINISH submitted={len(created)}/{len(tasks)} results={len(results)} routes_updated={changed} pending={len(pending)}")
     return 0
 

@@ -1,5 +1,4 @@
-import { persistRouteSnapshots } from "../handlers/update.js";
-import { normalizeReturnRoute } from "../utils/metrics.js";
+import { persistRouteReport } from "../services/routes.js";
 // Durable Object: 服务器监控指标广播中心
 // 负责维护 WebSocket 连接并在收到新指标时向订阅者实时推送
 //
@@ -1346,17 +1345,11 @@ export class MetricsBroadcaster {
     this.agentHistoryWrites.set(serverId, state);
     try {
       const metrics = applyHistoryMetricAggregates(payload.metrics, aggregateForWrite);
-      await persistRouteSnapshots(this.env.DB, serverId, payload.metrics);
-      const returnRoute = normalizeReturnRoute(payload.metrics.return_route);
-      if (returnRoute) {
-        const detail = await this._getAgentServerDetail(serverId);
-        const serialized = JSON.stringify(returnRoute);
-        if (serialized !== JSON.stringify(normalizeReturnRoute(detail?.return_route))) {
-          await this.env.DB.prepare("UPDATE servers SET return_route = ? WHERE id = ? AND COALESCE(return_route, '') <> ?")
-            .bind(serialized, serverId, serialized).run();
-          if (detail) detail.return_route = serialized;
-          clearServerDetailCache();
-        }
+      if (['return_route', 'return_route_ipv6', 'forward_routes'].some(key => payload.metrics[key] && Object.keys(payload.metrics[key]).length)) {
+        try {
+          const routeDetail = await this._getAgentServerDetail(serverId);
+          await persistRouteReport(this.env, serverId, payload.metrics, routeDetail, this.state);
+        } catch (error) { console.warn('[Routes] Route report skipped:', error?.message || error); }
       }
       await saveMetricsHistory(
         this.env.DB,

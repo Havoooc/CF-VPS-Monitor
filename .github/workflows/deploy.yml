@@ -49,6 +49,7 @@ jobs:
             themes/luminaplus/package-lock.json
       - run: npm ci
       - run: npm ci --prefix themes/luminaplus
+      - run: python3 server/test_route_policy.py
       - run: npm run check
       - run: npm run build:frontend
       - uses: cloudflare/wrangler-action@v4

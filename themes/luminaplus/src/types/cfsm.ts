@@ -34,6 +34,12 @@ const nullableNumber = z
  */
 export const ReturnRouteSchema = z
   .object({
+    carrier_meta: z.record(z.string(), z.object({
+      probed_at: z.string().optional(), last_attempt_at: z.string().optional(),
+      status: z.string().optional(), route_type: z.string().optional(),
+      quality: z.string().optional(), confidence: z.string().optional(), reason: z.string().optional(),
+      destination_reached: z.boolean().optional(),
+    })).optional(),
     region: z.string().optional(),
     telecom: z.string().optional(),
     unicom: z.string().optional(),

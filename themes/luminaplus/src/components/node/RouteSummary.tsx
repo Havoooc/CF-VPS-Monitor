@@ -19,18 +19,21 @@ export function RouteSummary({ returnRoute, forwardRoutes, returnRoutes }: { ret
     const name = route?.[key]?.trim();
     if (!name) return <span className="route-pending">待检测</span>;
     const displayName = name.replace(/\s*[·,，]?\s*未完整/g, "").replace(/\s*[·,，]?\s*Cox 未确认/g, "").replace(/国际段未知/g, "—").trim();
-    const quality = classifyReturnRoute(displayName);
-    const time = typeof route?.probed_at === "string" ? route.probed_at : "";
+    const meta = route?.carrier_meta?.[key];
+    const quality = classifyReturnRoute(meta?.route_type || displayName);
+    const time = meta?.probed_at || (typeof route?.probed_at === "string" ? route.probed_at : "");
     const region = typeof route?.region === "string" ? route.region : "未记录";
     const source = typeof route?.source === "string" ? route.source : (manual ? "未记录" : "服务器探针");
-    const title = returnRouteTitle(displayName, quality, { carrierKey: key, probedAt: time || undefined });
+    const title = returnRouteTitle(displayName, quality, { carrierKey: key, probedAt: time || undefined, confidence: meta?.confidence, reason: meta?.reason }).replace("回程线路", manual ? "去程线路" : "回程线路");
     return <details className="route-cell">
       <summary title={title}><span className={clsx("return-route-summary-badge", `is-${quality}`)}>{displayName}</span></summary>
       <div className="route-cell-details">
         <div>{/^(TCPTest|NextTrace)/.test(source) ? "测量记录" : (manual ? "手动记录" : "探针检测")}</div>
         <div>地点：{region}</div>
         <div>来源：{source}</div>
-        <div>时间：{time ? new Date(time).toLocaleString() : "未记录"}</div>
+        <div>有效检测：{time ? new Date(time).toLocaleString() : "未记录"}</div>
+        {meta?.last_attempt_at && <div>最近探测：{new Date(meta.last_attempt_at).toLocaleString()}</div>}
+        {meta?.status && meta.status !== "ok" && <div>沿用上次有效记录</div>}
       </div>
     </details>;
   }

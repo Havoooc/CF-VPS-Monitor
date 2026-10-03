@@ -1,4 +1,5 @@
-const fields = ['telecom', 'unicom', 'mobile', 'region', 'source', 'probed_at'];
+import { normalizeRouteMeta } from "./routeRecord.js";
+const fields = ['telecom', 'unicom', 'mobile', 'region', 'source', 'probed_at', 'last_attempt_at'];
 let cache = null;
 let expires = 0;
 
@@ -15,6 +16,8 @@ export function normalizeMeasuredReturnRoutes(input) {
       if (value.length > 160 || /[\x00-\x1f]/.test(value)) throw new Error('invalidForwardRoutes');
       if (value) result[family][key] = value;
     }
+    if (record.carrier_meta) result[family].carrier_meta = normalizeRouteMeta(record.carrier_meta);
+    if (result[family].last_attempt_at && !Number.isFinite(Date.parse(result[family].last_attempt_at))) throw new Error('invalidRouteDate');
     if (result[family].probed_at && !Number.isFinite(Date.parse(result[family].probed_at))) throw new Error('invalidForwardRouteDate');
   }
   return result;

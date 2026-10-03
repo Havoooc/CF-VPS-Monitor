@@ -6,7 +6,8 @@ import os
 import random
 import subprocess
 import sys
-import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from cfsm_route_core import route_type, merge_candidate, atomic_save
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,38 +31,13 @@ def log(message):
 
 
 def classify(carrier, hops):
-    seen = set()
-    texts = []
+    asns = set()
     for group in hops:
-        if not isinstance(group, list):
-            continue
-        for item in group:
-            if not item.get("Success"):
-                continue
-            geo = item.get("Geo") or {}
-            asn = str(geo.get("asnumber") or "").removeprefix("AS")
-            if asn:
-                seen.add(asn)
-            texts.extend((str(geo.get("isp") or ""), str(geo.get("owner") or "")))
-    joined = " ".join(texts).lower()
-    if carrier == "telecom":
-        if "4809" in seen or "cn2" in joined:
-            return "CN2"
-        if "4134" in seen or "china telecom backbone" in joined or "中国电信" in joined:
-            return "普通国际"
-    elif carrier == "unicom":
-        if "9929" in seen or "cuii" in joined:
-            return "9929"
-        if "10099" in seen or "cug-backbone" in joined:
-            return "10099"
-        if "4837" in seen or "china169" in joined:
-            return "4837"
-    elif carrier == "mobile":
-        if "58807" in seen or "cmi n2" in joined or "中移国际" in joined:
-            return "CMIN2"
-        if {"58453", "9808", "56041"} & seen or "cmnet" in joined or "china mobile" in joined:
-            return "CMI"
-    return None
+        if isinstance(group, list):
+            for item in group:
+                if item.get("Success"):
+                    asns.add(str((item.get("Geo") or {}).get("asnumber") or ""))
+    return route_type(carrier, asns)
 
 
 def probe(carrier, hostname):
@@ -88,7 +64,7 @@ def probe(carrier, hostname):
     if not route:
         log(f"{carrier} no_backbone_evidence")
         return None
-    return {"route": route, "target": hostname}
+    return {"route": route, "route_type": route, "confidence": "high", "destination_reached": True, "reason": "destination reached; ASN evidence", "target": hostname}
 
 
 def main():
@@ -105,30 +81,20 @@ def main():
             return 0
         if os.environ.get("CFSM_NO_JITTER") != "1":
             time.sleep(random.randint(0, 300))
-        results = {carrier: probe(carrier, target) for carrier, target in TARGETS.items()}
-        if not all(results.values()):
-            log("REJECT incomplete_probe_set; cached data kept")
-            return 0
-        value = {
-            "region": "浙江",
-            "telecom": results["telecom"]["route"],
-            "unicom": results["unicom"]["route"],
-            "mobile": results["mobile"]["route"],
-            "probed_at": datetime.now(timezone.utc).isoformat(),
-            "method": "nexttrace-ipv6-tcp",
-        }
-        fd, temp_name = tempfile.mkstemp(prefix="zhejiang-v6.", dir=str(BASE))
+        def with_retry(item):
+            carrier, target = item
+            return carrier, probe(carrier, target) or probe(carrier, target)
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            results = dict(pool.map(with_retry, TARGETS.items()))
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                json.dump(value, stream, ensure_ascii=False)
-                stream.write("\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temp_name, OUTPUT)
-        finally:
-            if os.path.exists(temp_name):
-                os.unlink(temp_name)
-        log("UPDATED all_three_carriers")
+            value = json.loads(OUTPUT.read_text())
+        except Exception:
+            value = {}
+        stamp = datetime.now(timezone.utc).isoformat()
+        updated = sum(merge_candidate(value, carrier, results.get(carrier), stamp) for carrier in TARGETS)
+        value.update(region="浙江", source="服务器每日 IPv6 回程探针", method="nexttrace-ipv6-tcp-v3", last_attempt_at=stamp)
+        atomic_save(OUTPUT, value)
+        log(f"FINISH updated={updated}/3")
     return 0
 
 

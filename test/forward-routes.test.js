@@ -25,3 +25,15 @@ test('manual routes persist and invalidate cached values without changing server
     assert.equal(routes['node-1'].ipv6.telecom, '普通国际');
   } finally { await mf.dispose(); }
 });
+
+test('carrier timestamps survive normalization and older reports cannot roll back accepted routes', async () => {
+  const { mergeRouteRecord } = await import('../src/utils/routeRecord.js');
+  const previous = { telecom: 'CN2', carrier_meta: { telecom: { probed_at: '2026-10-03T00:00:00Z', status: 'ok' } } };
+  const stale = { telecom: '163', carrier_meta: { telecom: { probed_at: '2026-10-01T00:00:00Z', last_attempt_at: '2026-10-04T00:00:00Z', status: 'failed' } } };
+  const merged = mergeRouteRecord(previous, stale);
+  assert.equal(merged.telecom, 'CN2');
+  assert.equal(merged.carrier_meta.telecom.probed_at, previous.carrier_meta.telecom.probed_at);
+  assert.equal(merged.carrier_meta.telecom.last_attempt_at, '2026-10-04T00:00:00Z');
+  assert.equal(normalizeForwardRoutes({ ipv4: merged }).ipv4.carrier_meta.telecom.status, 'failed');
+  assert.throws(() => normalizeForwardRoutes({ ipv4: { carrier_meta: { telecom: { probed_at: 'invalid' } } } }));
+});

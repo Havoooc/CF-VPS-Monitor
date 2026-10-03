@@ -1,3 +1,4 @@
+import { normalizeRouteMeta } from "./routeRecord.js";
 import {
   NUMERIC_METRIC_FIELDS,
   PROBE_METRIC_FIELDS
@@ -108,6 +109,10 @@ export function normalizeReturnRoute(value) {
     }
   }
 
+  if (source.carrier_meta) {
+    try { result.carrier_meta = normalizeRouteMeta(source.carrier_meta); } catch { return null; }
+  }
+  if (typeof source.last_attempt_at === 'string' && Number.isFinite(Date.parse(source.last_attempt_at))) result.last_attempt_at = source.last_attempt_at;
   return result;
 }
 

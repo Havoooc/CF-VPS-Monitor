@@ -6,6 +6,12 @@ CRON=/etc/cron.d/cfsm-route-update
 BACKUP_DIR="/root/codex-backups/cfsm-daily-route-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$BACKUP_DIR"
 cp -a "$PROBE" "$BACKUP_DIR/cf-probe.sh"
+for route_file in /var/lib/cfsm-return-route/zhejiang.json /var/lib/cfsm-return-route/zhejiang-v6.json /var/lib/cfsm-forward-route/routes.json; do
+  if [ -f "$route_file" ]; then cp -a "$route_file" "$BACKUP_DIR/$(basename "$route_file")"; fi
+done
+for script in cfsm-route-update-v6.py cfsm-forward-route-update.py; do
+  if [ -f "/usr/local/bin/$script" ]; then cp -a "/usr/local/bin/$script" "$BACKUP_DIR/"; fi
+done
 
 python3 - "$PROBE" <<'PY'
 import pathlib, sys
@@ -33,28 +39,18 @@ path.write_text(text)
 PY
 bash -n "$PROBE"
 
-if [ -f "$CRON" ]; then
-  cp -a "$CRON" "$BACKUP_DIR/cfsm-route-update.cron"
-  sed -i 's#15 \*/12 \* \* \*#15 3 * * *#' "$CRON"
-  grep -q '^15 3 \* \* \* root /usr/local/bin/cfsm-route-update.sh$' "$CRON"
-else
-  TIMER=/etc/systemd/system/cfsm-route-update.timer
-  test -f "$TIMER"
-  cp -a "$TIMER" "$BACKUP_DIR/cfsm-route-update.timer"
-  sed -i 's#OnCalendar=.*#OnCalendar=*-*-* 03:15:00 UTC#' "$TIMER"
-  systemctl daemon-reload
-  systemctl restart cfsm-route-update.timer
-fi
-
 install_route_timer() {
   local task="$1" minute="$2"
+  for suffix in service timer; do
+    if [ -f "/etc/systemd/system/${task}.${suffix}" ]; then cp -a "/etc/systemd/system/${task}.${suffix}" "$BACKUP_DIR/"; fi
+  done
   cat >"/etc/systemd/system/${task}.service" <<EOF
 [Unit]
 Description=Daily CFSM route scan
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/${task}.py
-TimeoutStartSec=10min
+TimeoutStartSec=15min
 EOF
   cat >"/etc/systemd/system/${task}.timer" <<EOF
 [Unit]
@@ -68,7 +64,16 @@ EOF
   rm -f "/etc/cron.d/${task}"
   systemctl daemon-reload
   systemctl enable --now "${task}.timer"
+  systemctl restart "${task}.timer"
 }
+
+# Track and install the complete IPv4 implementation and shared merge policy.
+for file in cfsm_route_core.py cfsm-return-route.py cfsm-return-route.sh cfsm-route-update.py cfsm-route-update.sh; do
+  if [ -f "/usr/local/bin/$file" ]; then cp -a "/usr/local/bin/$file" "$BACKUP_DIR/"; fi
+  install -m 0755 "/tmp/$file" "/usr/local/bin/$file"
+done
+if [ -f "$CRON" ]; then cp -a "$CRON" "$BACKUP_DIR/"; fi
+install_route_timer cfsm-route-update 15
 
 if [ "${CFSM_ENABLE_IPV6:-0}" = 1 ]; then
   install -m 0755 /tmp/cfsm-route-update-v6.py /usr/local/bin/cfsm-route-update-v6.py
