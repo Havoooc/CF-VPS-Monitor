@@ -84,6 +84,8 @@ def summarize(result, carrier):
             continue
         if labels[-1:] != [label]:
             labels.append(label)
+    if len(labels) == 1 and labels[0] in {"163", "CT", "4837", "CMI"}:
+        return ""  # A domestic-only response does not identify the international path.
     return " → ".join(labels)[:160]
 
 
