@@ -538,3 +538,20 @@ Shell / PowerShell 版已不再维护，新装一律走 Go 版；把 `agent/inst
 ## 致谢
 
 - [komari-agent](https://github.com/komari-monitor/komari-agent)：本项目的部分监控指标统计口径参考了该项目的实现。
+
+
+## 每日三网路线文件协议（v1.3.9 起）
+
+扫描任务与探针独立运行，探针自动读取以下固定文件：
+
+| 上报字段 | 文件 |
+| --- | --- |
+| `return_route` | `/var/lib/cfsm-return-route/zhejiang.json` |
+| `return_route_ipv6` | `/var/lib/cfsm-return-route/zhejiang-v6.json` |
+| `forward_routes` | `/var/lib/cfsm-forward-route/routes.json` |
+
+Shell 与 Go 探针每分钟最多读取一次，每个文件最多 64 KiB，仅上报有效且非空的 JSON 对象。
+缺失、无效或空文件不覆盖面板已保存的路线。扫描频率继续由独立 systemd timer 管理（当前每日一次），不会随实时指标的上报间隔加快。
+`server/install-daily-route-scan.sh` 不再修改探针生成代码；旧 Shell 探针请先升级至 1.3.9。
+
+NAT 环境可在本机 `config.conf` 使用 `PUBLIC_IPV4` 指定已有公网 IPv4；Go 只接受有效 IPv4，动态配置写回会保留该本地字段。该配置不是新增 IPv6 地址。

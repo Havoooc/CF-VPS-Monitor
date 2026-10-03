@@ -11,7 +11,7 @@ import { addServerColumns } from '../database/updateDatabase.js';
 import { clearResourceAlertState, isSmtpNotificationTarget, sendNotification } from '../services/notification.js';
 import { getNextServerHistoryPartitionId, HISTORY_MAX_PARTITION_ID } from '../database/indexOptimization.js';
 import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
-import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
+import { notifyFrontendAccessChanged, scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
 
@@ -961,6 +961,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       if (hasResourceAlertRulesInput && !resourceAlertEnabled) {
         await clearResourceAlertState(env.DB);
       }
+      if (settings.is_public !== undefined) await notifyFrontendAccessChanged(env);
       Object.assign(sys, shouldSaveAppearanceOptions ? appearanceOptions : {}, siteOptions);
       if (shouldCloseAgentWssReports && (
         settings.wss_report_enabled !== undefined ||
@@ -1003,6 +1004,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       }
       
       clearServersListCache();
+      await notifyFrontendAccessChanged(env);
       
       return createSuccessResponse({ 
         success: true, 
@@ -1019,6 +1021,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       await deleteServer(env.DB, id);
       
       clearServersListCache();
+      await notifyFrontendAccessChanged(env);
       
       return createSuccessResponse({ 
         success: true, 
@@ -1039,6 +1042,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       }
       
       clearServersListCache();
+      await notifyFrontendAccessChanged(env);
       
       return createSuccessResponse({ 
         success: true, 
@@ -1155,6 +1159,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         catch (error) { console.warn('[Admin] Forward routes not saved:', error?.message || error); }
       }
       clearServersListCache();
+      await notifyFrontendAccessChanged(env);
       scheduleAgentConfigChanged(env, ctx, id);
       
       return createSuccessResponse({ 
@@ -1179,6 +1184,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       }
       
       clearServersListCache();
+      await notifyFrontendAccessChanged(env);
       
       return createSuccessResponse({ 
         success: true, 
@@ -1317,6 +1323,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       }
 
       clearServersListCache();
+      await notifyFrontendAccessChanged(env);
 
       return createSuccessResponse({
         success: true,

@@ -684,7 +684,7 @@ function isWebSocketUpgradeRequest(request) {
   return !!upgradeHeader && upgradeHeader.toLowerCase() === 'websocket';
 }
 
-async function forwardWebSocketUpgrade(request, env, internalPath, logPrefix) {
+async function forwardWebSocketUpgrade(request, env, internalPath, logPrefix, isAdmin = false) {
   if (!env || !env.METRICS_BROADCASTER) {
     return new Response(JSON.stringify({ error: 'WebSocket not enabled', code: 503 }), {
       status: 503,
@@ -704,6 +704,8 @@ async function forwardWebSocketUpgrade(request, env, internalPath, logPrefix) {
     const realOrigin = new URL(request.url).origin;
     const headers = new Headers(request.headers);
     headers.set('X-Real-Origin', realOrigin);
+    // Never trust a client-supplied internal authorization header.
+    headers.set('X-CFSM-Frontend-Admin', isAdmin ? '1' : '0');
     if (request.cf?.country && !headers.get('cf-ipcountry')) {
       headers.set('cf-ipcountry', request.cf.country);
     }
@@ -724,14 +726,15 @@ async function forwardWebSocketUpgrade(request, env, internalPath, logPrefix) {
 
 export async function handleWebSocketUpgrade(request, env) {
   const settings = await loadSiteSettings(env.DB, { forceRefresh: true });
-  if (settings?.is_public !== 'true' && !await checkWebSocketAuth(request, env, settings)) {
+  const isAdmin = await checkWebSocketAuth(request, env, settings);
+  if (settings?.is_public !== 'true' && !isAdmin) {
     return new Response(JSON.stringify({ error: 'Unauthorized', code: 401 }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' }
     });
   }
 
-  const response = await forwardWebSocketUpgrade(request, env, '/ws', '[ws]');
+  const response = await forwardWebSocketUpgrade(request, env, '/ws', '[ws]', isAdmin);
   if (response?.status === 101) {
     markFrontendRealtimeActive();
   }

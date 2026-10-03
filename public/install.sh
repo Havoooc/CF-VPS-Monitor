@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-AGENT_VERSION="1.3.8"
+AGENT_VERSION="1.3.9"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -288,6 +288,7 @@ fi
 
 while IFS='=' read -r key value; do
     case "$key" in
+        PUBLIC_IPV4) PUBLIC_IPV4="${value%\"}"; PUBLIC_IPV4="${PUBLIC_IPV4#\"}" ;;
         SERVER_ID) SERVER_ID="${value%\"}"; SERVER_ID="${SERVER_ID#\"}" ;;
         SECRET) SECRET="${value%\"}"; SECRET="${SECRET#\"}" ;;
         WORKER_URL) WORKER_URL="${value%\"}"; WORKER_URL="${WORKER_URL#\"}" ;;
@@ -573,14 +574,9 @@ apply_remote_config() {
         PREV_LOOP_TIME=$(date +%s)
         log_info "Dynamic configuration applied: md5=${CONFIG_MD5} interface=${INTERFACE:-auto} ct=${CT_NODE:-} cu=${CU_NODE:-} cm=${CM_NODE:-} bd=${BD_NODE:-}"
 
-        if kill -0 "$WORKER_PID" 2>/dev/null; then
-            pkill -P "$WORKER_PID" 2>/dev/null || true
-            kill "$WORKER_PID" 2>/dev/null || true
-            wait "$WORKER_PID" 2>/dev/null || true
-        fi
-        rm -f /dev/shm/.cf_probe_* 2>/dev/null || true
-        run_network_worker &
-        WORKER_PID=$!
+        # Restart in the main loop, after response parsing finishes. Avoid
+        # waiting on the background network process inside configuration handling.
+        NETWORK_WORKER_RESTART_REQUIRED=1
 
         if [ "$COLLECT_INTERVAL" -gt 0 ]; then
             SAMPLES_JSON=""
@@ -1157,7 +1153,11 @@ run_network_worker() {
         
         # 10分钟检测一次 IP
         if [ $((now - last_ip)) -ge 600 ] || [ "$last_ip" -eq 0 ]; then
-            get_cf_trace_ip "-4" > /dev/shm/.cf_ipv4.tmp && mv /dev/shm/.cf_ipv4.tmp /dev/shm/.cf_ipv4 || true
+            if [ -n "${PUBLIC_IPV4:-}" ]; then
+                printf '%s\n' "$PUBLIC_IPV4" > /dev/shm/.cf_ipv4.tmp && mv /dev/shm/.cf_ipv4.tmp /dev/shm/.cf_ipv4
+            else
+                get_cf_trace_ip "-4" > /dev/shm/.cf_ipv4.tmp && mv /dev/shm/.cf_ipv4.tmp /dev/shm/.cf_ipv4 || true
+            fi
             (if ip -6 route show default >/dev/null 2>&1; then get_cf_trace_ip "-6"; else echo "0"; fi) > /dev/shm/.cf_ipv6.tmp && mv /dev/shm/.cf_ipv6.tmp /dev/shm/.cf_ipv6 || true
             last_ip="$now"
         fi
@@ -1205,8 +1205,9 @@ log_debug "Config: id=${SERVER_ID} url=${WORKER_URL} report_interval=${REPORT_IN
 log_debug "Nodes: ct=${CT_NODE:-} cu=${CU_NODE:-} cm=${CM_NODE:-} bd=${BD_NODE:-}"
 
 # 核心架构升级：在这里脱离主循环，静默启动常驻网络 Worker 协程，无 wait 干扰
-run_network_worker &
+run_network_worker </dev/null >/dev/null 2>&1 &
 WORKER_PID=$!
+disown "$WORKER_PID" 2>/dev/null || true
 SAMPLES_JSON=""
 SAMPLE_COUNT=0
 LAST_REPORT_TIME=0
@@ -1216,10 +1217,14 @@ while true; do
     rotate_log_if_needed "$PROBE_LOG_FILE"
 
     # Worker 进程健康检查与自动重启
-    if ! kill -0 "$WORKER_PID" 2>/dev/null; then
-        log_warn_debug "Network worker exited; restarting"
-        run_network_worker &
+    if [ "${NETWORK_WORKER_RESTART_REQUIRED:-0}" = 1 ] || ! kill -0 "$WORKER_PID" 2>/dev/null; then
+        NETWORK_WORKER_RESTART_REQUIRED=0
+        pkill -P "$WORKER_PID" 2>/dev/null || true
+        kill "$WORKER_PID" 2>/dev/null || true
+        log_warn_debug "Network worker restarting after configuration change or exit"
+        run_network_worker </dev/null >/dev/null 2>&1 &
         WORKER_PID=$!
+        disown "$WORKER_PID" 2>/dev/null || true
     fi
     
     # ------------------ 同步系统指标采集模块 (全面 set -u 安全适配) ------------------
@@ -1390,8 +1395,38 @@ while true; do
     LOSS_CM_JSON=$(json_probe_value "$CM_NODE" "$LOSS_CM")
     LOSS_BD_JSON=$(json_probe_value "$BD_NODE" "$LOSS_BD")
 
+    # Route files are generated independently by the daily scanners. Read at most
+    # once per minute, including WSS/HTTP sampling loops; malformed files are omitted.
+    if [ $((LOOP_START_TIME - ${ROUTE_FIELDS_AT:-0})) -ge 60 ]; then
+        ROUTE_FIELDS_AT=$LOOP_START_TIME
+        ROUTE_FIELDS=""
+        if command -v python3 >/dev/null 2>&1; then
+            ROUTE_FIELDS=$(python3 - <<'ROUTE_PY'
+import json
+routes = {}
+for field, path in (
+    ('return_route', '/var/lib/cfsm-return-route/zhejiang.json'),
+    ('return_route_ipv6', '/var/lib/cfsm-return-route/zhejiang-v6.json'),
+    ('forward_routes', '/var/lib/cfsm-forward-route/routes.json'),
+):
+    try:
+        with open(path, 'rb') as handle:
+            raw = handle.read(65537)
+        if len(raw) > 65536:
+            continue
+        value = json.loads(raw)
+        if isinstance(value, dict) and value:
+            routes[field] = value
+    except (OSError, ValueError, RecursionError):
+        pass
+print(json.dumps(routes, separators=(',', ':'))[1:-1])
+ROUTE_PY
+) || ROUTE_FIELDS=""
+        fi
+    fi
+
     METRICS_JSON=$(cat <<EOF
-{"cpu":"$CPU","ram_total":"$RAM_TOTAL","ram_used":"$RAM_USED","swap_total":"$SWAP_TOTAL","swap_used":"$SWAP_USED","disk_total":"$DISK_TOTAL","disk_used":"$DISK_USED","load_avg":"$LOAD_AVG","boot_time":"$BOOT_TIME","net_rx":"$RX_NOW","net_tx":"$TX_NOW","net_rx_monthly":"$RX_MONTHLY","net_tx_monthly":"$TX_MONTHLY","net_in_speed":"$RX_SPEED","net_out_speed":"$TX_SPEED","os":"$EOS","arch":"$EARCH","kernel_version":"$EKERNEL","cpu_info":"$ECPU","cpu_cores":"$CPU_CORES","gpu_info":$GPU_INFO_VALUE,"processes":"$PROCESSES","tcp_conn":"$TCP_CONN","udp_conn":"$UDP_CONN","ip_v4":"$IPV4","ip_v6":"$IPV6","ping_ct":$PING_CT_JSON,"ping_cu":$PING_CU_JSON,"ping_cm":$PING_CM_JSON,"ping_bd":$PING_BD_JSON,"loss_ct":$LOSS_CT_JSON,"loss_cu":$LOSS_CU_JSON,"loss_cm":$LOSS_CM_JSON,"loss_bd":$LOSS_BD_JSON}
+{"cpu":"$CPU","ram_total":"$RAM_TOTAL","ram_used":"$RAM_USED","swap_total":"$SWAP_TOTAL","swap_used":"$SWAP_USED","disk_total":"$DISK_TOTAL","disk_used":"$DISK_USED","load_avg":"$LOAD_AVG","boot_time":"$BOOT_TIME","net_rx":"$RX_NOW","net_tx":"$TX_NOW","net_rx_monthly":"$RX_MONTHLY","net_tx_monthly":"$TX_MONTHLY","net_in_speed":"$RX_SPEED","net_out_speed":"$TX_SPEED","os":"$EOS","arch":"$EARCH","kernel_version":"$EKERNEL","cpu_info":"$ECPU","cpu_cores":"$CPU_CORES","gpu_info":$GPU_INFO_VALUE,"processes":"$PROCESSES","tcp_conn":"$TCP_CONN","udp_conn":"$UDP_CONN","ip_v4":"$IPV4","ip_v6":"$IPV6","ping_ct":$PING_CT_JSON,"ping_cu":$PING_CU_JSON,"ping_cm":$PING_CM_JSON,"ping_bd":$PING_BD_JSON,"loss_ct":$LOSS_CT_JSON,"loss_cu":$LOSS_CU_JSON,"loss_cm":$LOSS_CM_JSON,"loss_bd":$LOSS_BD_JSON${ROUTE_FIELDS:+,$ROUTE_FIELDS}}
 EOF
 )
     SAMPLE_METRICS_JSON=$(cat <<EOF
@@ -1567,9 +1602,11 @@ install_probe() {
     TX_CORRECTION=""
     DEBUG_MODE=""
     CONFIG_MD5=""
+    PUBLIC_IPV4=""
 
     for arg in "$@"; do
         case "$arg" in
+            -public_ipv4=*) PUBLIC_IPV4="${arg#*=}" ;;
             -id=*) SERVER_ID="${arg#-id=}" ;;
             -secret=*) SECRET="${arg#-secret=}" ;;
             -url=*) WORKER_URL="${arg#-url=}" ;;
@@ -1611,6 +1648,7 @@ install_probe() {
 SERVER_ID="${SERVER_ID}"
 SECRET="${SECRET}"
 WORKER_URL="${WORKER_URL}"
+PUBLIC_IPV4="${PUBLIC_IPV4:-}"
 COLLECT_INTERVAL="${COLLECT_INTERVAL}"
 REPORT_INTERVAL="${REPORT_INTERVAL}"
 CT_NODE="${CT_NODE:-}"
@@ -1628,6 +1666,7 @@ EOF
             step "从配置文件读取参数..."
             while IFS='=' read -r key value; do
                 case "$key" in
+                    PUBLIC_IPV4) PUBLIC_IPV4="${value%\"}"; PUBLIC_IPV4="${PUBLIC_IPV4#\"}" ;;
                     SERVER_ID) SERVER_ID="${value%\"}"; SERVER_ID="${SERVER_ID#\"}" ;;
                     SECRET) SECRET="${value%\"}"; SECRET="${SECRET#\"}" ;;
                     WORKER_URL) WORKER_URL="${value%\"}"; WORKER_URL="${WORKER_URL#\"}" ;;
@@ -1674,6 +1713,7 @@ EOF
 SERVER_ID="${SERVER_ID}"
 SECRET="${SECRET}"
 WORKER_URL="${WORKER_URL}"
+PUBLIC_IPV4="${PUBLIC_IPV4:-}"
 COLLECT_INTERVAL="${COLLECT_INTERVAL}"
 REPORT_INTERVAL="${REPORT_INTERVAL}"
 CT_NODE="${CT_NODE:-}"

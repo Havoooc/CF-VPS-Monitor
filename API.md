@@ -2231,3 +2231,13 @@ curl -X POST https://status.example.com/admin/api \
 ***
 
 > 文档同步：与源码 `src/index.js`、`src/middleware/auth.js`、`src/handlers/{admin,dashboard,frontend,theme,update}.js`、`src/durable/MetricsBroadcaster.js`、`src/utils/{settings,errors,cors,csp,cache,metrics,common,serverBilling,version,latestReportCache,agentConfig}.js`、`src/database/{schema,updateDatabase}.js` 一一对应；后续修改任一文件时，请同步更新本文件。
+
+
+### 实时重放的客户端选择
+
+`GET /api/servers` 和 `GET /api/server?id=...` 可添加 `include_replay=0`。
+此时 `latestReportUpdates` 返回空数组，跳过 Durable Object 的实时重放查询；默认行为保持兼容原客户端。
+LuminaPlus 使用实时订阅接收样本，主动关闭 REST 重放。
+
+前端 WebSocket 订阅遵循服务器可见性。管理员可订阅隐藏节点，公共连接只能订阅当前可见节点；站点变为私有时公共连接关闭。
+WS 短期一次性票据仅供建立连接，不能作为管理员 REST Bearer/Cookie；消费登记失败时拒绝票据。

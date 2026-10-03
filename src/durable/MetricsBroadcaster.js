@@ -424,6 +424,39 @@ export class MetricsBroadcaster {
     return typeof msg.scope === 'string' ? msg.scope : null;
   }
 
+  async _publicServerIds() {
+    const { results } = await this.env.DB.prepare(
+      "SELECT id FROM servers WHERE COALESCE(is_hidden, '0') != '1'"
+    ).all();
+    return (results || []).map(server => String(server.id));
+  }
+
+  _canDeliverFrontend(attachment, serverId) {
+    return attachment.isAdmin === true ||
+      (Array.isArray(attachment.allowedServerIds) && attachment.allowedServerIds.includes(serverId));
+  }
+
+  async _refreshPublicFrontendAccess() {
+    const sockets = this._getFrontendWebSockets().filter(ws => ws.deserializeAttachment()?.isAdmin !== true);
+    if (sockets.length === 0) return;
+    try {
+      const settings = await loadSiteSettings(this.env.DB, { forceRefresh: true });
+      const allowedServerIds = settings?.is_public === 'true' ? await this._publicServerIds() : [];
+      for (const ws of sockets) {
+        const attachment = ws.deserializeAttachment() || {};
+        ws.serializeAttachment({ ...attachment, isAdmin: false, allowedServerIds });
+        if (settings?.is_public !== 'true') ws.close(1008, 'Authentication required');
+      }
+    } catch (error) {
+      // A failed permissions refresh must not leave previously granted access active.
+      for (const ws of sockets) {
+        ws.serializeAttachment({ ...(ws.deserializeAttachment() || {}), isAdmin: false, allowedServerIds: [] });
+        try { ws.close(1013, 'Permissions unavailable'); } catch (_) {}
+      }
+      throw error;
+    }
+  }
+
   // 根据 scope 和 serverIds 判断是否需要接收某台服务器的更新
   _shouldDeliver(sessionScope, serverId, serverIds) {
     if (!sessionScope) return false;
@@ -977,6 +1010,11 @@ export class MetricsBroadcaster {
       });
     }
 
+    if (body?.frontendAccessChanged === true) {
+      await this._refreshPublicFrontendAccess();
+      return Response.json({ ok: true });
+    }
+
     if (body?.agentReportModeChanged === true) {
       const settings = await loadSiteSettings(this.env.DB, { forceRefresh: true });
       const scheduleState = getWssReportScheduleState(settings);
@@ -1005,6 +1043,7 @@ export class MetricsBroadcaster {
       });
     }
 
+    await this._refreshPublicFrontendAccess();
     clearServerDetailCache();
     this.agentServerDetails.delete(serverId);
 
@@ -1126,6 +1165,7 @@ export class MetricsBroadcaster {
         AND ABS(COALESCE(rx_correction, 0) - ?) < 0.000001
         AND ABS(COALESCE(tx_correction, 0) - ?) < 0.000001
     `).bind(serverId, ackRx, ackTx).run();
+    await this._refreshPublicFrontendAccess();
     clearServerDetailCache();
     this.agentServerDetails.delete(serverId);
     return { ok: true };
@@ -1613,6 +1653,12 @@ export class MetricsBroadcaster {
         return new Response('Invalid subscription scope', { status: 400 });
       }
 
+      const isAdmin = request.headers.get('X-CFSM-Frontend-Admin') === '1';
+      const allowedServerIds = isAdmin ? null : await this._publicServerIds();
+      if (!isAdmin && scope !== 'all' && !allowedServerIds.includes(scope)) {
+        return new Response('Forbidden', { status: 403 });
+      }
+
       // @ts-ignore - Cloudflare Workers 运行时提供 WebSocketPair
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
@@ -1621,7 +1667,7 @@ export class MetricsBroadcaster {
       this.state.acceptWebSocket(server);
 
       // 将订阅 scope 和空 serverIds 附加到 WebSocket（休眠后仍保留）
-      server.serializeAttachment({ scope, serverIds: [] });
+      server.serializeAttachment({ scope, serverIds: [], isAdmin, allowedServerIds });
 
       // 立即发送 hello 让客户端确认连接成功
       try {
@@ -2147,11 +2193,17 @@ export class MetricsBroadcaster {
     for (const ws of websockets) {
       const attachment = ws.deserializeAttachment();
       if (!attachment) continue;
+      if (typeof attachment.isAdmin !== 'boolean') {
+        // Pre-upgrade hibernating sockets must reconnect through the Worker.
+        try { ws.close(1012, 'Reconnect to refresh permissions'); } catch (_) {}
+        continue;
+      }
       if (targetScope === 'all' && attachment.scope !== 'all') continue;
       if (targetScope === 'single' && attachment.scope === 'all') continue;
 
       const scopedUpdates = updates
-        .filter(item => this._shouldDeliver(attachment.scope, item.serverId, attachment.serverIds))
+        .filter(item => this._canDeliverFrontend(attachment, item.serverId) &&
+          this._shouldDeliver(attachment.scope, item.serverId, attachment.serverIds))
         .map(maskPublicIpUpdate);
       if (scopedUpdates.length === 0) continue;
 
@@ -2199,7 +2251,14 @@ export class MetricsBroadcaster {
         }
 
         const serverIds = normalizedServerIds.ids;
-        ws.serializeAttachment({ scope, serverIds });
+        if (current.isAdmin !== true && (
+          (scope !== 'all' && !this._canDeliverFrontend(current, scope)) ||
+          serverIds.some(id => !this._canDeliverFrontend(current, id))
+        )) {
+          this._closeInvalidSubscription(ws);
+          return;
+        }
+        ws.serializeAttachment({ ...current, scope, serverIds });
         try {
           ws.send(JSON.stringify({
             type: 'subscribed',

@@ -1,5 +1,9 @@
 import importlib.util
 import unittest
+import json
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 from cfsm_route_core import route_type, merge_candidate
 
@@ -132,6 +136,41 @@ class RoutePolicyTests(unittest.TestCase):
         self.assertIsNone(forward.summarize({'success': True, 'data': {'hops': [{'asn': 'AS4134'}, {'asn': 'AS136190'}]}}, 'telecom'))
         result = forward.summarize({'success': True, 'data': {'hops': [{'asn': 'AS4134'}, {'asn': 'AS4809'}, {'asn': 'AS21859'}]}}, 'telecom')
         self.assertEqual(result['route_type'], 'CN2')
+
+class ShellRouteProtocolTests(unittest.TestCase):
+    def helper(self, directory):
+        installer = Path(__file__).parent.parent / 'public' / 'install.sh'
+        source = installer.read_text().split("<<'ROUTE_PY'\n", 1)[1].split('\nROUTE_PY', 1)[0]
+        for old, new in (
+            ('/var/lib/cfsm-return-route/zhejiang.json', str(directory / 'v4.json')),
+            ('/var/lib/cfsm-return-route/zhejiang-v6.json', str(directory / 'v6.json')),
+            ('/var/lib/cfsm-forward-route/routes.json', str(directory / 'forward.json')),
+        ):
+            source = source.replace(old, new)
+        output = subprocess.check_output([sys.executable, '-c', source], text=True)
+        return json.loads('{' + output.strip() + '}')
+
+    def test_shell_reads_all_route_fields_without_code_patches(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / 'v4.json').write_text('{"telecom":"CN2"}')
+            (directory / 'v6.json').write_text('{"mobile":"CMIN2"}')
+            (directory / 'forward.json').write_text('{"ipv4":{"unicom":"9929"}}')
+            result = self.helper(directory)
+            self.assertEqual(result['return_route']['telecom'], 'CN2')
+            self.assertEqual(result['return_route_ipv6']['mobile'], 'CMIN2')
+            self.assertEqual(result['forward_routes']['ipv4']['unicom'], '9929')
+
+    def test_shell_omits_missing_malformed_empty_and_oversized_reports(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.assertEqual(self.helper(directory), {})
+            (directory / 'v4.json').write_text('broken')
+            (directory / 'v6.json').write_text('[]')
+            (directory / 'forward.json').write_text('{}')
+            self.assertEqual(self.helper(directory), {})
+            (directory / 'v4.json').write_text(json.dumps({'telecom': 'x' * 65536}))
+            self.assertEqual(self.helper(directory), {})
 
 if __name__ == '__main__':
     unittest.main()

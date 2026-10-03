@@ -357,7 +357,7 @@ export async function getServersSnapshot(
       return;
     }
     try {
-      const data = await cfsmGet("/api/servers", ServersResponseSchema, { ...requestOptions, base });
+      const data = await cfsmGet("/api/servers?include_replay=0", ServersResponseSchema, { ...requestOptions, base });
       serverSnapshots.set(base, data);
       collect(index, { base, data, error: undefined });
     } catch (error) {
@@ -388,13 +388,13 @@ export async function getNodes(
     .sort((left, right) => left.weight - right.weight);
 }
 
-/** 单台服务器详情。带 `latestReportUpdates`，主题目前只用其中的服务器字段。 */
+/** 单台服务器详情；主题通过实时订阅接收样本，省去未使用的 REST 重放。 */
 export async function getServerDetail(
   serverId: string,
   options?: RequestOptions,
 ): Promise<CfsmServer> {
   return cfsmGet(
-    `/api/server?${new URLSearchParams({ id: serverId })}`,
+    `/api/server?${new URLSearchParams({ id: serverId, include_replay: "0" })}`,
     CfsmServerSchema,
     { ...options, base: options?.base ?? getServerApiBase(serverId) },
   );

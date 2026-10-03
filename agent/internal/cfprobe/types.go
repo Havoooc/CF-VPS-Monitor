@@ -22,6 +22,7 @@ type Config struct {
 	ServerID        string
 	Secret          string
 	WorkerURL       string
+	PublicIPv4      string
 	CollectInterval int
 	ReportInterval  int
 	CTNode          string

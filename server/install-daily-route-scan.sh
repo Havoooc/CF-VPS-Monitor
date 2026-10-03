@@ -5,7 +5,7 @@ PROBE=/usr/local/bin/cf-probe.sh
 CRON=/etc/cron.d/cfsm-route-update
 BACKUP_DIR="/root/codex-backups/cfsm-daily-route-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$BACKUP_DIR"
-cp -a "$PROBE" "$BACKUP_DIR/cf-probe.sh"
+if [ -f "$PROBE" ]; then cp -a "$PROBE" "$BACKUP_DIR/cf-probe.sh"; fi
 for route_file in /var/lib/cfsm-return-route/zhejiang.json /var/lib/cfsm-return-route/zhejiang-v6.json /var/lib/cfsm-forward-route/routes.json; do
   if [ -f "$route_file" ]; then cp -a "$route_file" "$BACKUP_DIR/$(basename "$route_file")"; fi
 done
@@ -13,31 +13,12 @@ for script in cfsm-route-update-v6.py cfsm-forward-route-update.py; do
   if [ -f "/usr/local/bin/$script" ]; then cp -a "/usr/local/bin/$script" "$BACKUP_DIR/"; fi
 done
 
-python3 - "$PROBE" <<'PY'
-import pathlib, sys
-path = pathlib.Path(sys.argv[1])
-text = path.read_text()
-if 'RETURN_ROUTE_IPV6_JSON' not in text:
-    marker = "    RETURN_ROUTE_JSON='{}'\n"
-    block = marker + "    RETURN_ROUTE_IPV6_JSON='{}'\n    if [ -s /var/lib/cfsm-return-route/zhejiang-v6.json ] && python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding=\"utf-8\"))' /var/lib/cfsm-return-route/zhejiang-v6.json >/dev/null 2>&1; then\n        RETURN_ROUTE_IPV6_JSON=$(cat /var/lib/cfsm-return-route/zhejiang-v6.json)\n    fi\n"
-    if text.count(marker) != 1:
-        raise SystemExit('unexpected_cf_probe_return_route_block')
-    text = text.replace(marker, block, 1)
-    text = text.replace('"return_route":$RETURN_ROUTE_JSON}', '"return_route":$RETURN_ROUTE_JSON,"return_route_ipv6":$RETURN_ROUTE_IPV6_JSON}', 1)
-if 'FORWARD_ROUTES_JSON' not in text:
-    marker = "    RETURN_ROUTE_IPV6_JSON='{}'\n"
-    block = marker + "    FORWARD_ROUTES_JSON='{}'\n    if [ -s /var/lib/cfsm-forward-route/routes.json ] && python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding=\"utf-8\"))' /var/lib/cfsm-forward-route/routes.json >/dev/null 2>&1; then\n        FORWARD_ROUTES_JSON=$(cat /var/lib/cfsm-forward-route/routes.json)\n    fi\n"
-    if text.count(marker) != 1:
-        raise SystemExit('unexpected_cf_probe_ipv6_block')
-    text = text.replace(marker, block, 1)
-    old = '"return_route":$RETURN_ROUTE_JSON,"return_route_ipv6":$RETURN_ROUTE_IPV6_JSON}'
-    new = '"return_route":$RETURN_ROUTE_JSON,"return_route_ipv6":$RETURN_ROUTE_IPV6_JSON,"forward_routes":$FORWARD_ROUTES_JSON}'
-    if text.count(old) != 1:
-        raise SystemExit('unexpected_cf_probe_metrics_json')
-    text = text.replace(old, new, 1)
-path.write_text(text)
-PY
-bash -n "$PROBE"
+# Official probes read route files themselves. Never patch generated probe code.
+# Legacy Shell probes must be upgraded before installing the independent timers.
+if [ -f "$PROBE" ] && grep -qE '^ExecStart=.*cf-probe\.sh' /etc/systemd/system/cf-probe.service && ! grep -q 'ROUTE_FIELDS_AT' "$PROBE"; then
+  echo "Upgrade the Shell probe to 1.3.9+ before installing route timers." >&2
+  exit 1
+fi
 
 install_route_timer() {
   local task="$1" minute="$2"

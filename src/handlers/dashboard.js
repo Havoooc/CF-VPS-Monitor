@@ -199,15 +199,16 @@ export async function handleServerAPI(request, env, sys) {
   const server = await getServerDetail(env.DB, id, isLoggedIn);
   if (!server) return createNotFoundResponse('Server not found');
   
-  const [latestMetrics, realtimeState] = await Promise.all([
+  const [latestMetrics, realtimeState, forwardRoutes, returnRoutes] = await Promise.all([
     getLatestMetrics(env.DB, id, server),
-    getRealtimeStateForServers(env, [id])
+    url.searchParams.get('include_replay') !== '0' ? getRealtimeStateForServers(env, [id]) : Promise.resolve({ latestReportUpdates: [] }),
+    getForwardRoutes(env.DB), getMeasuredReturnRoutes(env.DB)
   ]);
   mergeMetricsIntoServer(server, latestMetrics);
-  server.forward_routes = (await getForwardRoutes(env.DB))[id];
+  server.forward_routes = forwardRoutes[id];
   // 浅拷贝：getMeasuredReturnRoutes 返回的是 30s 模块级缓存对象，就地改 .ipv4 会让这份
   // 派生数据（活值 + 来源标注）留在缓存里，并被随后 routes.js 的 IPv6 写入持久化进快照。
-  const measured = (await getMeasuredReturnRoutes(env.DB))[id];
+  const measured = returnRoutes[id];
   server.return_routes = { ...(measured || { ipv4: {}, ipv6: {} }) };
   const liveReturnRoute = normalizeReturnRoute(server.return_route);
   if (liveReturnRoute) server.return_routes.ipv4 = { ...liveReturnRoute, source: '服务器定时回程探针' };
@@ -227,9 +228,12 @@ export async function handleServersAPI(request, env, sys) {
   }
   markFrontendRealtimeActive();
   
-  const results = (await getAllServers(env.DB, isLoggedIn)).map(withoutPrivateServerFields);
-  const forwardRoutes = await getForwardRoutes(env.DB);
-  const returnRoutes = await getMeasuredReturnRoutes(env.DB);
+  const [servers, forwardRoutes, returnRoutes] = await Promise.all([
+    getAllServers(env.DB, isLoggedIn), getForwardRoutes(env.DB), getMeasuredReturnRoutes(env.DB)
+  ]);
+  const results = servers.map(withoutPrivateServerFields);
+  // Legacy clients keep replay by default; themes may explicitly opt out.
+  const includeReplay = new URL(request.url).searchParams.get('include_replay') !== '0';
   for (const server of results) {
     server.forward_routes = forwardRoutes[server.id];
     // 同上：拷贝一层再改，避免污染模块级缓存对象。
@@ -243,7 +247,7 @@ export async function handleServersAPI(request, env, sys) {
   const serverIds = results.map(server => server.id).filter(Boolean);
   const [latestMetricsMap, realtimeState, latencyHistory] = await Promise.all([
     getLatestMetricsForAllServers(env.DB),
-    getRealtimeStateForServers(env, serverIds),
+    includeReplay ? getRealtimeStateForServers(env, serverIds) : Promise.resolve({ latestReportUpdates: [] }),
     shouldIncludeLatencyHistory
       ? getDashboardLatencyHistory(env.DB, results)
       : Promise.resolve(new Map())

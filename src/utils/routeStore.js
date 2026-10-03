@@ -15,8 +15,15 @@ const CACHE_TTL_MS = 30000;
  * 数据写回缓存、并随下一次 save 持久化。
  */
 export function createRouteStore({ keyPrefix, invalidError, invalidDateError }) {
-  let cache = null;
-  let expires = 0;
+  const states = new WeakMap();
+  function stateFor(db) {
+    let state = states.get(db);
+    if (!state) {
+      state = { cache: null, expires: 0, pending: null, generation: 0 };
+      states.set(db, state);
+    }
+    return state;
+  }
 
   function normalize(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error(invalidError);
@@ -39,24 +46,37 @@ export function createRouteStore({ keyPrefix, invalidError, invalidDateError }) 
   }
 
   async function getAll(db) {
-    if (cache && Date.now() < expires) return cache;
-    const { results } = await db.prepare(`SELECT key, value FROM settings WHERE key LIKE '${keyPrefix}%'`).all();
-    const routes = {};
-    for (const row of results || []) {
-      if (!row.key?.startsWith(keyPrefix)) continue;
-      try { routes[row.key.slice(keyPrefix.length)] = normalize(JSON.parse(row.value)); } catch { /* 单节点数据坏掉不影响其余节点 */ }
-    }
-    cache = routes;
-    expires = Date.now() + CACHE_TTL_MS;
-    return routes;
+    const state = stateFor(db);
+    if (state.cache && Date.now() < state.expires) return state.cache;
+    if (state.pending) return state.pending;
+    const generation = state.generation;
+    const pending = (async () => {
+      const { results } = await db.prepare(`SELECT key, value FROM settings WHERE key LIKE '${keyPrefix}%'`).all();
+      const routes = {};
+      for (const row of results || []) {
+        if (!row.key?.startsWith(keyPrefix)) continue;
+        try { routes[row.key.slice(keyPrefix.length)] = normalize(JSON.parse(row.value)); } catch { /* Ignore a single malformed node. */ }
+      }
+      if (state.generation === generation) {
+        state.cache = routes;
+        state.expires = Date.now() + CACHE_TTL_MS;
+      }
+      return routes;
+    })();
+    state.pending = pending;
+    try { return await pending; }
+    finally { if (state.pending === pending) state.pending = null; }
   }
 
   async function save(db, id, routes) {
     const normalized = normalize(routes);
     const result = await db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value WHERE settings.value <> excluded.value')
       .bind(keyPrefix + id, JSON.stringify(normalized)).run();
-    cache = null;
-    expires = 0;
+    const state = stateFor(db);
+    state.generation++;
+    state.cache = null;
+    state.expires = 0;
+    state.pending = null;
     return result?.meta?.changes !== 0;
   }
 
