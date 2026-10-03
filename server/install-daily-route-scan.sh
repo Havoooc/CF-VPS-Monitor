@@ -41,18 +41,38 @@ else
   TIMER=/etc/systemd/system/cfsm-route-update.timer
   test -f "$TIMER"
   cp -a "$TIMER" "$BACKUP_DIR/cfsm-route-update.timer"
-  sed -i 's#OnCalendar=.*#OnCalendar=*-*-* 03:15:00#' "$TIMER"
+  sed -i 's#OnCalendar=.*#OnCalendar=*-*-* 03:15:00 UTC#' "$TIMER"
   systemctl daemon-reload
   systemctl restart cfsm-route-update.timer
 fi
 
+install_route_timer() {
+  local task="$1" minute="$2"
+  cat >"/etc/systemd/system/${task}.service" <<EOF
+[Unit]
+Description=Daily CFSM route scan
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/${task}.py
+TimeoutStartSec=10min
+EOF
+  cat >"/etc/systemd/system/${task}.timer" <<EOF
+[Unit]
+Description=Daily CFSM route scan timer
+[Timer]
+OnCalendar=*-*-* 03:${minute}:00 UTC
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+  rm -f "/etc/cron.d/${task}"
+  systemctl daemon-reload
+  systemctl enable --now "${task}.timer"
+}
+
 if [ "${CFSM_ENABLE_IPV6:-0}" = 1 ]; then
   install -m 0755 /tmp/cfsm-route-update-v6.py /usr/local/bin/cfsm-route-update-v6.py
-  test -x /usr/local/bin/cfsm-route-update-v6.py
-  cat >/etc/cron.d/cfsm-route-update-v6 <<'EOF'
-30 3 * * * root /usr/local/bin/cfsm-route-update-v6.py
-EOF
-  chmod 0644 /etc/cron.d/cfsm-route-update-v6
+  install_route_timer cfsm-route-update-v6 30
 fi
 
 if [ "${CFSM_ENABLE_FORWARD:-0}" = 1 ]; then
@@ -60,10 +80,7 @@ if [ "${CFSM_ENABLE_FORWARD:-0}" = 1 ]; then
   printf '%s\n' "$CFSM_SERVER_ID" >/etc/cfsm-forward-route-server-id
   chmod 0644 /etc/cfsm-forward-route-server-id
   install -m 0755 /tmp/cfsm-forward-route-update.py /usr/local/bin/cfsm-forward-route-update.py
-  cat >/etc/cron.d/cfsm-forward-route-update <<'EOF'
-5 3 * * * root /usr/local/bin/cfsm-forward-route-update.py
-EOF
-  chmod 0644 /etc/cron.d/cfsm-forward-route-update
+  install_route_timer cfsm-forward-route-update 05
 fi
 
 echo "Installed daily route schedule; backup=$BACKUP_DIR"
