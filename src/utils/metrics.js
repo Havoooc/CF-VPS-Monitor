@@ -97,6 +97,7 @@ export function normalizeReturnRoute(value) {
   if (typeof source.probed_at === 'string' && source.probed_at.trim()) {
     result.probed_at = source.probed_at.trim();
   }
+  if (typeof source.source === 'string' && source.source.trim().length <= 160) result.source = source.source.trim();
   if (typeof source.method === 'string' && source.method.trim()) {
     result.method = source.method.trim();
   }

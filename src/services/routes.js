@@ -24,11 +24,11 @@ export async function persistRouteReport(env, id, metrics, detail, ctx) {
       const previous = normalizeReturnRoute(detail?.return_route);
       const next = mergeRouteRecord(previous || {}, incoming);
       if (JSON.stringify(previous) === JSON.stringify(next)) return;
-      await env.DB.prepare("UPDATE servers SET return_route = ? WHERE id = ? AND COALESCE(return_route, '') <> ?")
+      const result = await env.DB.prepare("UPDATE servers SET return_route = ? WHERE id = ? AND COALESCE(return_route, '') <> ?")
         .bind(JSON.stringify(next), id, JSON.stringify(next)).run();
       if (detail) detail.return_route = JSON.stringify(next);
       patchServerDetailCache(id, { return_route: JSON.stringify(next) });
-      changes.push(...changesBetween(previous, next, 'IPv4 回程'));
+      if (result?.meta?.changes !== 0) changes.push(...changesBetween(previous, next, 'IPv4 回程'));
     },
     async () => {
       if (!metrics.return_route_ipv6 || typeof metrics.return_route_ipv6 !== 'object') return;
@@ -38,8 +38,8 @@ export async function persistRouteReport(env, id, metrics, detail, ctx) {
       const previous = (await getMeasuredReturnRoutes(env.DB))[id] || { ipv4: {}, ipv6: {} };
       const next = { ...previous, ipv6: mergeRouteRecord(previous.ipv6, incoming) };
       if (JSON.stringify(previous) === JSON.stringify(next)) return;
-      await saveMeasuredReturnRoutes(env.DB, id, next);
-      changes.push(...changesBetween(previous.ipv6, next.ipv6, 'IPv6 回程'));
+      const changed = await saveMeasuredReturnRoutes(env.DB, id, next);
+      if (changed) changes.push(...changesBetween(previous.ipv6, next.ipv6, 'IPv6 回程'));
     },
     async () => {
       if (!metrics.forward_routes || typeof metrics.forward_routes !== 'object') return;
@@ -48,8 +48,8 @@ export async function persistRouteReport(env, id, metrics, detail, ctx) {
       const previous = (await getForwardRoutes(env.DB))[id] || { ipv4: {}, ipv6: {} };
       const next = { ipv4: mergeRouteRecord(previous.ipv4, incoming.ipv4), ipv6: mergeRouteRecord(previous.ipv6, incoming.ipv6) };
       if (JSON.stringify(previous) === JSON.stringify(next)) return;
-      await saveForwardRoutes(env.DB, id, next);
-      for (const family of ['ipv4', 'ipv6']) changes.push(...changesBetween(previous[family], next[family], `${family.toUpperCase()} 去程`));
+      const changed = await saveForwardRoutes(env.DB, id, next);
+      if (changed) for (const family of ['ipv4', 'ipv6']) changes.push(...changesBetween(previous[family], next[family], `${family.toUpperCase()} 去程`));
     }
   ];
   for (const operation of operations) {

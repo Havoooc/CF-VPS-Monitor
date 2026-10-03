@@ -36,8 +36,9 @@ export async function getMeasuredReturnRoutes(db) {
 }
 export async function saveMeasuredReturnRoutes(db, id, routes) {
   const normalized = normalizeMeasuredReturnRoutes(routes);
-  await db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+  const result = await db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value WHERE settings.value <> excluded.value')
     .bind('return_snapshot:' + id, JSON.stringify(normalized)).run();
   cache = null;
   expires = 0;
+  return result?.meta?.changes !== 0;
 }
