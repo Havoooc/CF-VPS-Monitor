@@ -42,6 +42,7 @@ export const ReturnRouteSchema = z
   .passthrough();
 
 export type ReturnRoute = z.output<typeof ReturnRouteSchema>;
+export type ForwardRoutes = { ipv4?: ReturnRoute; ipv6?: ReturnRoute };
 /** 磁盘 IO；旧探针或全零时后端不会下发该对象。 */
 export const DiskIoSchema = z
   .object({
@@ -165,6 +166,7 @@ export const CfsmServerSchema = z
     boot_time: looseString.default(""),
     agent_version: looseString.default(""),
     return_route: ReturnRouteSchema.nullish(),
+    forward_routes: z.object({ ipv4: ReturnRouteSchema.optional(), ipv6: ReturnRouteSchema.optional() }).nullish(),
     last_updated: looseNumber.default(0),
     timestamp: looseNumber.default(0),
     is_online: z.boolean().optional(),
@@ -386,6 +388,7 @@ export interface NodeInfo {
   agent_version: string;
   /** 节点到浙江电信/联通/移动探测点的回程线路类型。 */
   return_route?: ReturnRoute;
+  forward_routes?: ForwardRoutes;
   /** CF-Server-Monitor 只下发可达性，不下发具体地址。 */
   ipv4: string;
   ipv6: string;

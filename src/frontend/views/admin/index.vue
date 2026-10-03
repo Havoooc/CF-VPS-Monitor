@@ -2083,6 +2083,16 @@ const createEditFormFromServer = (server) => ({
     region: server.region_override ?? (server.region || ''),
     tags: server.tags || '',
     note: server.note || '',
+    forward_routes: Object.fromEntries(['ipv4', 'ipv6'].map(family => {
+      const route = { ...(server.forward_routes?.[family] || {}) };
+      if (route.probed_at) {
+        const date = new Date(route.probed_at);
+        route.probed_at = Number.isFinite(date.getTime())
+          ? new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+          : '';
+      }
+      return [family, route];
+    })),
     price: normalizePrice(server.price),
     billing_cycle: normalizeBillingCycle(detectBillingCycle(server.price) || server.billing_cycle),
     auto_renewal: server.auto_renewal === '1' || server.auto_renewal === 1 || server.auto_renewal === true,
@@ -2236,6 +2246,11 @@ const saveEdit = async () => {
     region: editForm.value.region,
     tags: editForm.value.tags,
     note: editForm.value.note,
+    forward_routes: Object.fromEntries(['ipv4', 'ipv6'].map(family => {
+      const route = { ...(editForm.value.forward_routes?.[family] || {}) };
+      if (route.probed_at) route.probed_at = new Date(route.probed_at).toISOString();
+      return [family, route];
+    })),
     price: normalizedPrice,
     billing_cycle: normalizedBillingCycle,
     auto_renewal: normalizedAutoRenewal,

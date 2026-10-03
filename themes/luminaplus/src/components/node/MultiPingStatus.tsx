@@ -2,13 +2,9 @@ import { memo, useState } from "react";
 import { clsx } from "clsx";
 import { useMetricColorsVersion } from "@/hooks/useMetricColors";
 import { usePreferences } from "@/hooks/usePreferences";
-import type { HomepagePingDisplayLine, ReturnRoute } from "@/types/cfsm";
+import type { HomepagePingDisplayLine, ReturnRoute, ForwardRoutes } from "@/types/cfsm";
 import { latencyHeatColor, lossHeatColor } from "@/utils/metricTone";
-import {
-  RETURN_ROUTE_QUALITY_LABEL,
-  classifyReturnRoute,
-  returnRouteTitle,
-} from "@/utils/returnRoute";
+import { RouteSummary } from "./RouteSummary";
 import { HealthBucketTooltip } from "./HealthBucketTooltip";
 import { LatencyBars } from "./LatencyBars";
 import { PingLineSwitcher } from "./PingLineSwitcher";
@@ -230,12 +226,14 @@ export const MultiPingStatus = memo(function MultiPingStatus({
   density,
   className,
   returnRoute,
+  forwardRoutes,
 }: {
   uuid: string;
   lines: HomepagePingDisplayLine[];
   density: MultiPingStatusDensity;
   className?: string;
   returnRoute?: ReturnRoute;
+  forwardRoutes?: ForwardRoutes;
 }) {
   const { resolvedAppearance } = usePreferences();
   const colorsVersion = useMetricColorsVersion();
@@ -264,7 +262,7 @@ export const MultiPingStatus = memo(function MultiPingStatus({
               />
             ))}
           </div>
-          <ReturnRouteSummary returnRoute={returnRoute} />
+          <RouteSummary returnRoute={returnRoute} forwardRoutes={forwardRoutes} />
         </div>
       ) : (
         <>
@@ -272,60 +270,9 @@ export const MultiPingStatus = memo(function MultiPingStatus({
             <MultiPingMetricColumn uuid={uuid} lines={lines} metric="latency" density={density} redrawKey={redrawKey} />
             <MultiPingMetricColumn uuid={uuid} lines={lines} metric="loss" density={density} redrawKey={redrawKey} />
           </div>
-          <ReturnRouteSummary returnRoute={returnRoute} />
+          <RouteSummary returnRoute={returnRoute} forwardRoutes={forwardRoutes} />
         </>
       )}
     </div>
   );
 });
-
-const RETURN_ROUTE_CARRIERS = [
-  { key: "telecom", label: "电信" },
-  { key: "unicom", label: "联通" },
-  { key: "mobile", label: "移动" },
-] as const;
-
-function ReturnRouteSummary({ returnRoute }: { returnRoute?: ReturnRoute }) {
-  if (!returnRoute) return null;
-
-  const entries = RETURN_ROUTE_CARRIERS.flatMap(({ key, label }) => {
-    const routeLabel = returnRoute[key]?.trim();
-    if (!routeLabel) return [];
-    const quality = classifyReturnRoute(routeLabel);
-    const confidence = (returnRoute.confidence as Record<string, string> | undefined)?.[key];
-    const reason = (returnRoute.reason as Record<string, string> | undefined)?.[key];
-    const title = returnRouteTitle(routeLabel, quality, {
-      carrierKey: key,
-      confidence,
-      reason,
-      probedAt: typeof returnRoute.probed_at === "string" ? returnRoute.probed_at : undefined,
-    });
-    return [{ key, label, routeLabel, quality, confidence, title }];
-  });
-
-  if (entries.length === 0) return null;
-
-  return (
-    <section className="return-route-summary" aria-label="三网回程线路">
-      <div className="return-route-summary-heading">回程线路</div>
-      <div className="return-route-summary-grid">
-        {entries.map(({ key, label, routeLabel, quality, confidence, title }) => (
-          <div className="return-route-summary-item" key={key} title={title}>
-            <span className="return-route-summary-carrier">{label}</span>
-            <span
-              className={clsx(
-                "return-route-summary-badge",
-                `is-${quality}`,
-                confidence === "stale" && "is-stale",
-              )}
-            >
-              <span className="return-route-summary-name">{routeLabel}</span>
-              <span aria-hidden="true">·</span>
-              <span>{RETURN_ROUTE_QUALITY_LABEL[quality]}</span>
-            </span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}

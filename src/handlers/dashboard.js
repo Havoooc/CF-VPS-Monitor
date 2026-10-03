@@ -1,3 +1,4 @@
+import { getForwardRoutes } from '../utils/forwardRoutes.js';
 import { checkAuth, simpleAuthResponse } from '../middleware/auth.js';
 import { getDashboardLatencyHistory, getLatestMetrics, getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, getServerDetail } from '../utils/cache.js';
@@ -199,6 +200,7 @@ export async function handleServerAPI(request, env, sys) {
     getRealtimeStateForServers(env, [id])
   ]);
   mergeMetricsIntoServer(server, latestMetrics);
+  server.forward_routes = (await getForwardRoutes(env.DB))[id];
   server.latestReportUpdates = realtimeState.latestReportUpdates;
   server.sysConfig = {
     long_history_points: Number(normalizeLongHistoryPoints(sys.long_history_points))
@@ -216,6 +218,8 @@ export async function handleServersAPI(request, env, sys) {
   markFrontendRealtimeActive();
   
   const results = (await getAllServers(env.DB, isLoggedIn)).map(withoutPrivateServerFields);
+  const forwardRoutes = await getForwardRoutes(env.DB);
+  for (const server of results) server.forward_routes = forwardRoutes[server.id];
   const shouldIncludeLatencyHistory = sys.show_three_net_details === 'true';
   
   const serverIds = results.map(server => server.id).filter(Boolean);

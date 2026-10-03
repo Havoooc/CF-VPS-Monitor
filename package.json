@@ -16,7 +16,7 @@
     "test:agent-config": "node test/agent-config.js",
     "test:history-query": "node --test test/history-query.test.js",
     "preview": "vite preview",
-    "check": "npm test && node --test test/return-route-normalize.test.js test/history-query.test.js test/frontend-theme-routing.test.js test/cache-and-verification.test.js test/theme-store-resilience.test.js test/version-background.test.js && npm test --prefix themes/luminaplus && npm run typecheck --prefix themes/luminaplus"
+    "check": "npm test && node --test test/return-route-normalize.test.js test/history-query.test.js test/frontend-theme-routing.test.js test/cache-and-verification.test.js test/theme-store-resilience.test.js test/version-background.test.js test/forward-routes.test.js && npm test --prefix themes/luminaplus && npm run typecheck --prefix themes/luminaplus"
   },
   "keywords": [
     "cloudflare",

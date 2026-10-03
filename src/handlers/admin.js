@@ -1,3 +1,4 @@
+import { getForwardRoutes, saveForwardRoutes, normalizeForwardRoutes } from '../utils/forwardRoutes.js';
 import { buildAuthCookie, buildClearAuthCookie, checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
@@ -603,6 +604,7 @@ async function handleSaveThemeOptionsAction({ env, sys, data }) {
 
 async function handleListAction({ env }) {
   const servers = await getAllServers(env.DB);
+  const forwardRoutes = await getForwardRoutes(env.DB);
   const latestMetricsMap = await getLatestMetricsForAllServers(env.DB);
 
   const now = Date.now();
@@ -619,7 +621,7 @@ async function handleListAction({ env }) {
 
   const serversWithStatus = servers.map(server => {
     const latestMetrics = latestMetricsMap.get(server.id);
-    const item = { ...server, region_override: server.region || '' };
+    const item = { ...server, forward_routes: forwardRoutes[server.id], region_override: server.region || '' };
     let isOnline = false;
 
     if (latestMetrics) {
@@ -1048,6 +1050,11 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
       }
+      let forwardRoutes;
+      if (Object.hasOwn(data, 'forward_routes')) {
+        try { forwardRoutes = normalizeForwardRoutes(data.forward_routes); }
+        catch (e) { return createBadRequestResponse(e.message); }
+      }
       const effectiveConnectionMode = isWssReportConfigured(sys) ? connection_mode : 'http';
       const agentConfigResult = validateAgentConfigInput({
         collect_interval,
@@ -1141,6 +1148,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         return handleServerMutationError(env.DB, e, 'serverUpdateFailed');
       }
       
+      if (forwardRoutes) await saveForwardRoutes(env.DB, id, forwardRoutes);
       clearServersListCache();
       scheduleAgentConfigChanged(env, ctx, id);
       

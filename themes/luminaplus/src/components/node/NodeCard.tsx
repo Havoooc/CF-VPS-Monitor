@@ -38,6 +38,7 @@ import {
 } from "./nodeCardShared";
 import { IpStackBadges } from "./IpStackBadges";
 import { HealthBucketTooltip } from "./HealthBucketTooltip";
+import { RouteSummary } from "./RouteSummary";
 import { MultiPingStatus } from "./MultiPingStatus";
 import { formatHealthBucketTooltip } from "./pingBucketText";
 import { clsx } from "clsx";
@@ -158,6 +159,7 @@ export const NodeCard = memo(function NodeCard({
               lines={homepagePingLines}
               density="large"
               returnRoute={node.return_route}
+              forwardRoutes={node.forward_routes}
               className="card-metric-section"
             />
           ) : (
@@ -173,6 +175,10 @@ export const NodeCard = memo(function NodeCard({
               lossColor={lossColor}
             />
           )}
+          {homepagePingLines.length === 0 && (
+            <RouteSummary returnRoute={node.return_route} forwardRoutes={node.forward_routes} />
+          )}
+
         </div>
 
         <NodeCardFooter
