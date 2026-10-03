@@ -72,7 +72,7 @@ def load_nodes():
 def node_available(node, family):
     return bool(node and node.get("enabled") is True and node.get("runtime_state") == "online"
                 and (node.get("capabilities") or {}).get("traceroute") is True
-                and (family != "ipv6" or (node.get("capabilities") or {}).get("ipv6") is True)
+                and (family != "ipv6" or (node.get("capabilities") or {}).get("ipv6") is True))
 
 
 def create_task(task):
