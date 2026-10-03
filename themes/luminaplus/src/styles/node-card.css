@@ -495,23 +495,35 @@
   display: inline-flex;
   min-width: 0;
   align-items: center;
+  justify-content: center;
   gap: 3px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--route-badge-bg, var(--fill-tertiary));
   color: var(--route-badge-fg, var(--text-tertiary));
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 650;
   white-space: nowrap;
 }
 
 .return-route-summary-badge.is-excellent {
   --route-badge-fg: var(--status-online);
+  --route-badge-bg: color-mix(in srgb, var(--status-online) 10%, transparent);
 }
 
 .return-route-summary-badge.is-good {
   --route-badge-fg: var(--status-info);
+  --route-badge-bg: color-mix(in srgb, var(--status-info) 10%, transparent);
 }
 
 .return-route-summary-badge.is-standard {
   --route-badge-fg: var(--status-warning);
+  --route-badge-bg: color-mix(in srgb, var(--status-warning) 12%, transparent);
+}
+
+.return-route-summary-badge.is-pending {
+  --route-badge-fg: var(--text-tertiary);
+  --route-badge-bg: var(--fill-tertiary);
 }
 
 .multi-ping-columns {
@@ -884,12 +896,11 @@
 .route-family-switch { display:flex; gap:2px; padding:2px; border:1px solid var(--hairline); border-radius:8px; }
 .route-family-switch button { padding:3px 8px; border-radius:5px; color:var(--text-tertiary); font-size:10px; }
 .route-family-switch button[aria-pressed="true"] { background:var(--surface-elev); color:var(--text-primary); }
-.route-comparison { width:100%; table-layout:fixed; border-collapse:collapse; font-size:11px; }
-.route-comparison th:first-child { width:20%; }
-.route-comparison th, .route-comparison td { padding:9px 4px; text-align:left; vertical-align:top; border-bottom:1px solid var(--hairline); }
-.route-comparison thead th { font-weight:500; color:var(--text-tertiary); }
-.route-comparison tbody th { color:var(--text-secondary); font-weight:600; }
-.route-comparison tbody tr:last-child > * { border-bottom:0; }
-.route-comparison .return-route-summary-badge { display:inline-flex; max-width:100%; padding:3px 7px; border-radius:6px; background:var(--surface-elev); white-space:normal; overflow-wrap:anywhere; }
-.route-pending { color:var(--text-tertiary); font-size:10px; }
+/* 三网线路：每运营商一行「去程徽章 ⇄ 回程徽章」。左右徽章各占半宽，去回档位不同时
+   能各自着色对比；待检测给占位徽章，保证两列始终对称。 */
+.route-rows { display: flex; flex-direction: column; gap: 4px; }
+.route-row { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.route-row-carrier { flex: 0 0 34px; color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+.route-row-sep { flex: 0 0 auto; color: var(--text-tertiary); font-size: 11px; }
+.route-row .return-route-summary-badge { flex: 1 1 0; }
 .route-not-applicable { display:block; padding:10px 4px; color:var(--text-tertiary); text-align:center; font-size:11px; }

@@ -54,7 +54,8 @@ export function RouteSummary({ returnRoute, forwardRoutes, returnRoutes, hasPubl
 
   function routeCell(route: ReturnRoute | undefined, key: CarrierKey) {
     const displayName = bestRouteLabel(route, key);
-    if (!displayName) return <span className="route-pending">待检测</span>;
+    // 待检测也给一枚占位徽章：去/回两列始终对称，不会出现一边塌陷的布局抖动。
+    if (!displayName) return <span className="return-route-summary-badge is-pending">待检测</span>;
     const quality = classifyReturnRoute(displayName);
     return <span className={clsx("return-route-summary-badge", `is-${quality}`)}>{displayName}</span>;
   }
@@ -66,16 +67,18 @@ export function RouteSummary({ returnRoute, forwardRoutes, returnRoutes, hasPubl
           {(["ipv4", "ipv6"] as const).map(value => <button type="button" key={value} aria-pressed={family === value} onClick={() => setFamily(value)}>{value.toUpperCase()}</button>)}
         </div>
       </div>
-      <table className="route-comparison">
-        <thead><tr><th scope="col">运营商</th><th scope="col">去程 →</th><th scope="col">← 回程</th></tr></thead>
-        <tbody>{family === "ipv6" && !hasPublicIPv6 ? (
-          <tr><td colSpan={3}><span className="route-not-applicable">无公网 IPv6 · 去程与回程不适用</span></td></tr>
-        ) : RETURN_ROUTE_CARRIERS.map(({key, label}) => <tr key={key}>
-          <th scope="row">{label}</th>
-          <td>{routeCell(forward, key)}</td>
-          <td>{routeCell(reverse, key)}</td>
-        </tr>)}</tbody>
-      </table>
+      {family === "ipv6" && !hasPublicIPv6 ? (
+        <p className="route-not-applicable">无公网 IPv6 · 去程与回程不适用</p>
+      ) : (
+        <div className="route-rows">
+          {RETURN_ROUTE_CARRIERS.map(({ key, label }) => <div className="route-row" key={key}>
+            <span className="route-row-carrier">{label}</span>
+            {routeCell(forward, key)}
+            <span className="route-row-sep" aria-hidden="true">⇄</span>
+            {routeCell(reverse, key)}
+          </div>)}
+        </div>
+      )}
     </section>
   );
 }
