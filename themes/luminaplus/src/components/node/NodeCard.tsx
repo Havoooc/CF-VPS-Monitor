@@ -160,6 +160,7 @@ export const NodeCard = memo(function NodeCard({
               density="large"
               returnRoute={node.return_route}
               forwardRoutes={node.forward_routes} returnRoutes={node.return_routes}
+              hasPublicIPv6={node.ipv6 === "1"}
               className="card-metric-section"
             />
           ) : (
@@ -176,7 +177,7 @@ export const NodeCard = memo(function NodeCard({
             />
           )}
           {homepagePingLines.length === 0 && (
-            <RouteSummary returnRoute={node.return_route} forwardRoutes={node.forward_routes} returnRoutes={node.return_routes} />
+            <RouteSummary returnRoute={node.return_route} forwardRoutes={node.forward_routes} returnRoutes={node.return_routes} hasPublicIPv6={node.ipv6 === "1"} />
           )}
 
         </div>

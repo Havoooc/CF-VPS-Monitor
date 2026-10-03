@@ -9,7 +9,7 @@ const RETURN_ROUTE_CARRIERS = [
   { key: "mobile", label: "移动" },
 ] as const;
 
-export function RouteSummary({ returnRoute, forwardRoutes, returnRoutes }: { returnRoute?: ReturnRoute; forwardRoutes?: ForwardRoutes; returnRoutes?: ForwardRoutes }) {
+export function RouteSummary({ returnRoute, forwardRoutes, returnRoutes, hasPublicIPv6 = true }: { returnRoute?: ReturnRoute; forwardRoutes?: ForwardRoutes; returnRoutes?: ForwardRoutes; hasPublicIPv6?: boolean }) {
   const [family, setFamily] = useState<"ipv4" | "ipv6">("ipv4");
   const forward = forwardRoutes?.[family];
   // Existing probe results use IPv4 unless explicitly marked otherwise.
@@ -51,7 +51,9 @@ export function RouteSummary({ returnRoute, forwardRoutes, returnRoutes }: { ret
       </div>
       <table className="route-comparison">
         <thead><tr><th scope="col">运营商</th><th scope="col">去程 →</th><th scope="col">← 回程</th></tr></thead>
-        <tbody>{RETURN_ROUTE_CARRIERS.map(({key, label}) => <tr key={key}>
+        <tbody>{family === "ipv6" && !hasPublicIPv6 ? (
+          <tr><td colSpan={3}><span className="route-not-applicable">无公网 IPv6 · 去程与回程不适用</span></td></tr>
+        ) : RETURN_ROUTE_CARRIERS.map(({key, label}) => <tr key={key}>
           <th scope="row">{label}</th>
           <td>{routeCell(forward, key, true)}</td>
           <td>{routeCell(reverse, key, false)}</td>

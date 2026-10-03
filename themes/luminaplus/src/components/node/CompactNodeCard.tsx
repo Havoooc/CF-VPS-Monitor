@@ -738,6 +738,7 @@ export const CompactNodeCard = memo(function CompactNodeCard({
           density="compact"
           returnRoute={node.return_route}
               forwardRoutes={node.forward_routes} returnRoutes={node.return_routes}
+          hasPublicIPv6={node.ipv6 === "1"}
           className="compact-node-network"
         />
       ) : (

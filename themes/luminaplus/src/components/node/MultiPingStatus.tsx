@@ -228,6 +228,7 @@ export const MultiPingStatus = memo(function MultiPingStatus({
   returnRoute,
   forwardRoutes,
   returnRoutes,
+  hasPublicIPv6,
 }: {
   uuid: string;
   lines: HomepagePingDisplayLine[];
@@ -236,6 +237,7 @@ export const MultiPingStatus = memo(function MultiPingStatus({
   returnRoute?: ReturnRoute;
   forwardRoutes?: ForwardRoutes;
   returnRoutes?: ForwardRoutes;
+  hasPublicIPv6?: boolean;
 }) {
   const { resolvedAppearance } = usePreferences();
   const colorsVersion = useMetricColorsVersion();
@@ -264,7 +266,7 @@ export const MultiPingStatus = memo(function MultiPingStatus({
               />
             ))}
           </div>
-          <RouteSummary returnRoute={returnRoute} forwardRoutes={forwardRoutes} returnRoutes={returnRoutes} />
+          <RouteSummary returnRoute={returnRoute} forwardRoutes={forwardRoutes} returnRoutes={returnRoutes} hasPublicIPv6={hasPublicIPv6} />
         </div>
       ) : (
         <>
@@ -272,7 +274,7 @@ export const MultiPingStatus = memo(function MultiPingStatus({
             <MultiPingMetricColumn uuid={uuid} lines={lines} metric="latency" density={density} redrawKey={redrawKey} />
             <MultiPingMetricColumn uuid={uuid} lines={lines} metric="loss" density={density} redrawKey={redrawKey} />
           </div>
-          <RouteSummary returnRoute={returnRoute} forwardRoutes={forwardRoutes} returnRoutes={returnRoutes} />
+          <RouteSummary returnRoute={returnRoute} forwardRoutes={forwardRoutes} returnRoutes={returnRoutes} hasPublicIPv6={hasPublicIPv6} />
         </>
       )}
     </div>

@@ -1009,3 +1009,4 @@
 .route-cell .return-route-summary-badge { white-space:normal; display:inline-flex; padding:3px 7px; border-radius:6px; background:var(--surface-elev); }
 .route-cell-details { margin-top:7px; color:var(--text-tertiary); font-size:10px; line-height:1.7; overflow-wrap:anywhere; }
 .route-pending { color:var(--text-tertiary); font-size:10px; }
+.route-not-applicable { display:block; padding:10px 4px; color:var(--text-tertiary); text-align:center; font-size:11px; }
