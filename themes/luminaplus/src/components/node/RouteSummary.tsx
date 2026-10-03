@@ -24,17 +24,33 @@ export function RouteSummary({ returnRoute, forwardRoutes, returnRoutes, hasPubl
     const time = meta?.probed_at || (typeof route?.probed_at === "string" ? route.probed_at : "");
     const region = meta?.region || (typeof route?.region === "string" ? route.region : "未记录");
     const source = meta?.source || (typeof route?.source === "string" ? route.source : (manual ? "未记录" : "服务器探针"));
+    const routePath = meta?.route_path?.trim();
     const reason = meta?.status === "held" ? "线路变化等待连续两天确认，沿用上次有效记录"
       : meta?.status === "failed" ? "本次未取得有效新证据，沿用上次记录"
       : meta?.reason === "observed backbone/transit ASN evidence" ? "已识别骨干和国际段 ASN；不据此确认终点可达"
       : meta?.reason === "destination reached; ASN evidence" ? "已到达探测终点，并取得 ASN 证据" : meta?.reason;
     const title = returnRouteTitle(displayName, quality, { carrierKey: key, probedAt: time || undefined, confidence: meta?.confidence, reason }).replace("回程线路", manual ? "去程线路" : "回程线路");
     return <details className="route-cell">
-      <summary title={title}><span className={clsx("return-route-summary-badge", `is-${quality}`)}>{displayName}</span></summary>
+      <summary title={title}>
+        <span className={clsx("return-route-summary-badge", `is-${quality}`)}>{displayName}</span>
+        <span className="route-cell-expand">{routePath ? "查看路径" : "详情"}<span aria-hidden="true">⌄</span></span>
+      </summary>
+      {routePath && <div className="route-path-panel">
+        <div className="route-path-heading">{manual ? "去程探测路径" : "回程探测路径"}<span>VPS → 国内探测点</span></div>
+        <div className="route-path-chain" aria-label={`${manual ? "去程" : "回程"}逐跳 ASN 路径`}>
+          {routePath.split(" → ").map((hop, index) => <span className="route-path-step" key={`${index}-${hop}`}>
+            {index > 0 && <span className="route-path-arrow" aria-hidden="true">→</span>}
+            <span className="route-path-hop">{hop}</span>
+          </span>)}
+        </div>
+        <div className="route-path-note">按跳序排列 · * 表示该跳无响应 · 展示 ASN，不展示中间路由器 IP</div>
+      </div>}
       <div className="route-cell-details">
         <div>{/^(TCPTest|NextTrace)/.test(source) ? "测量记录" : (manual ? "手动记录" : "探针检测")}</div>
         <div>地点：{region}</div>
         <div>来源：{source}</div>
+        {meta?.reason && <div>判定依据：{meta.reason}</div>}
+        {typeof meta?.destination_reached === "boolean" && <div>探测终点：{meta.destination_reached ? "已到达" : "未确认到达"}</div>}
         <div>有效检测：{time ? new Date(time).toLocaleString() : "未记录"}</div>
         {meta?.last_attempt_at && <div>最近探测：{new Date(meta.last_attempt_at).toLocaleString()}</div>}
         {meta?.status && meta.status !== "ok" && <div>沿用上次有效记录</div>}

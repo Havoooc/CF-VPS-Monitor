@@ -1006,7 +1006,18 @@
 .route-cell summary { cursor:pointer; list-style:none; overflow-wrap:anywhere; }
 .route-cell summary::-webkit-details-marker { display:none; }
 .route-cell summary:focus-visible { outline:2px solid var(--text-secondary); outline-offset:3px; }
-.route-cell .return-route-summary-badge { white-space:normal; display:inline-flex; padding:3px 7px; border-radius:6px; background:var(--surface-elev); }
+.route-cell summary { display:flex; align-items:flex-start; justify-content:space-between; gap:5px; }
+.route-cell .return-route-summary-badge { min-width:0; white-space:normal; display:inline-flex; padding:3px 7px; border-radius:6px; background:var(--surface-elev); }
+.route-cell-expand { display:inline-flex; flex:0 0 auto; align-items:center; gap:2px; padding-top:4px; color:var(--text-tertiary); font-size:9px; white-space:nowrap; }
+.route-cell[open] .route-cell-expand > span { transform:rotate(180deg); }
+.route-path-panel { margin-top:8px; padding:8px; border:1px solid var(--hairline); border-radius:8px; background:var(--surface-elev); }
+.route-path-heading { display:flex; justify-content:space-between; gap:8px; color:var(--text-secondary); font-size:9px; font-weight:650; }
+.route-path-heading > span { color:var(--text-tertiary); font-weight:450; white-space:nowrap; }
+.route-path-chain { display:flex; flex-wrap:wrap; align-items:center; gap:4px 3px; margin-top:7px; }
+.route-path-step { display:inline-flex; align-items:center; gap:3px; max-width:100%; }
+.route-path-hop { display:inline-block; padding:2px 5px; border-radius:5px; background:var(--surface); color:var(--text-secondary); font:600 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap:anywhere; }
+.route-path-arrow { color:var(--text-tertiary); font-size:9px; }
+.route-path-note { margin:6px 0 0; color:var(--text-tertiary); font-size:8px; line-height:1.45; }
 .route-cell-details { margin-top:7px; color:var(--text-tertiary); font-size:10px; line-height:1.7; overflow-wrap:anywhere; }
 .route-pending { color:var(--text-tertiary); font-size:10px; }
 .route-not-applicable { display:block; padding:10px 4px; color:var(--text-tertiary); text-align:center; font-size:11px; }

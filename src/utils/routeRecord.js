@@ -7,10 +7,11 @@ export function normalizeRouteMeta(input) {
     const source = input[carrier];
     if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
     const meta = {};
-    for (const key of [...dates, 'status', 'route_type', 'quality', 'confidence', 'reason', 'region', 'source']) {
+    for (const key of [...dates, 'status', 'route_type', 'quality', 'confidence', 'reason', 'region', 'source', 'route_path']) {
       const value = source[key];
       if (value == null) continue;
-      if (typeof value !== 'string' || value.length > 500 || /[\x00-\x1f]/.test(value)) throw new Error('invalidRouteMetadata');
+      const maxLength = key === 'route_path' ? 1200 : 500;
+      if (typeof value !== 'string' || value.length > maxLength || /[\x00-\x1f]/.test(value)) throw new Error('invalidRouteMetadata');
       if (dates.includes(key) && !Number.isFinite(Date.parse(value))) throw new Error('invalidRouteDate');
       meta[key] = value;
     }

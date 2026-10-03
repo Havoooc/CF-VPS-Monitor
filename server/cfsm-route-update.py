@@ -42,7 +42,8 @@ def main():
             valid = value in {'CN2', '9929', '10099', '4837', 'CMIN2', 'CMI', 'CMNET',
                               '普通国际', '国内电信', '国内联通', '国内移动'}
             candidate = {'route': value, 'confidence': data.get('confidence', {}).get(carrier, 'low'),
-                         'reason': data.get('reason', {}).get(carrier, ''), 'route_type': value} if valid else None
+                         'reason': data.get('reason', {}).get(carrier, ''), 'route_type': value,
+                         'route_path': data.get('route_paths', {}).get(carrier, '')} if valid else None
             updated += merge_candidate(old, carrier, candidate, stamp)
         old.update(region='浙江', source='服务器每日 IPv4 回程探针', method='nexttrace-json-v3')
         old['last_attempt_at'] = stamp

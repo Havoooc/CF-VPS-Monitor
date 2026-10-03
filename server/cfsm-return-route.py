@@ -231,6 +231,31 @@ def _is_private(ip):
         return False
 
 
+def format_route_path(hops):
+    """Return the observed ASN path in probe order; consecutive repeats are grouped."""
+    labels = []
+    for hop in sorted(hops, key=lambda item: item.get("ttl") or 0):
+        if not hop.get("ok"):
+            labels.append("*")
+            continue
+        asn = hop.get("asn")
+        tag = hop.get("tag")
+        if asn is not None:
+            label = "AS%d%s" % (asn, " (%s)" % tag if tag else "")
+        else:
+            label = re.sub(r"\s+", " ", hop.get("isp") or hop.get("owner") or "ASN 未识别").strip()[:36]
+        labels.append(label)
+
+    compact = []
+    for label in labels:
+        if compact and compact[-1][0] == label:
+            compact[-1][1] += 1
+        else:
+            compact.append([label, 1])
+    path = " → ".join("%s ×%d" % (label, count) if count > 1 else label for label, count in compact)
+    return path[:1200]
+
+
 def public_hops_of(hops):
     """已解析成功、且不是内网地址的跳"""
     return [h for h in hops if h["ok"] and h["ip"] and not _is_private(h["ip"])]
@@ -320,6 +345,7 @@ def analyse(hops):
         "max_ttl": max_ttl, "unresolved": sorted(un), "longest_run": longest_run,
         "dest_ip": resolved[-1]["ip"], "dest_asn": dest_asn,
         "cn_hops": cn_hops, "evidence": evidence, "tail_cut": tail_cut,
+        "route_path": format_route_path(hops),
         "ev_tags": ev_tags, "cn_tags": cn_tags,
         "public_hops": public_hops,
         "first_public": public_hops[0] if public_hops else None,
@@ -456,6 +482,7 @@ def classify_offline(blocks):
         val, why, note = classify(key, ev)
         out[key] = {"value": val, "confidence": ev["confidence"],
                     "reason": why, "note": note,
+                    "route_path": ev["route_path"],
                     "conf_reason": ev.get("conf_reason", ""),
                     "path_incomplete": ev["path_incomplete"],
                     "longest_unresolved_run": ev["longest_run"]}
@@ -512,6 +539,7 @@ def main():
         "retried": retried,
         "confidence": {},
         "reason": {},
+        "route_paths": {},
     }
     usable = 0
     for key, _ in CARRIERS:
@@ -524,6 +552,7 @@ def main():
         (val, why, note), ev = r
         payload[key] = val if val else "未知"
         payload["confidence"][key] = ev["confidence"]
+        payload["route_paths"][key] = ev["route_path"]
         parts = [why]
         # 无结论时 note 不拼进去：更新器自己会写成「保留旧值（本次无结论：…）」，
         # 再拼一遍「本次不更新该列，保留旧值」就重复了。

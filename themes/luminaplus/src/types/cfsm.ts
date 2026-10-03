@@ -39,6 +39,7 @@ export const ReturnRouteSchema = z
       status: z.string().optional(), route_type: z.string().optional(),
       quality: z.string().optional(), confidence: z.string().optional(), reason: z.string().optional(),
       region: z.string().optional(), source: z.string().optional(),
+      route_path: z.string().max(1200).optional(),
       destination_reached: z.boolean().optional(),
     })).optional(),
     region: z.string().optional(),

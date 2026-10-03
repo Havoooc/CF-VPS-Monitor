@@ -79,6 +79,11 @@ def merge_candidate(record, carrier, candidate, stamp):
     for field in ('region', 'source'):
         if candidate.get(field):
             current[field] = candidate[field]
+    if 'route_path' in candidate:
+        if candidate['route_path']:
+            current['route_path'] = candidate['route_path']
+        else:
+            current.pop('route_path', None)
     if isinstance(candidate.get('destination_reached'), bool):
         current['destination_reached'] = candidate['destination_reached']
     else:
