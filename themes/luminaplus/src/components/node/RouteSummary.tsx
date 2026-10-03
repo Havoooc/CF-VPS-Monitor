@@ -22,8 +22,8 @@ export function RouteSummary({ returnRoute, forwardRoutes, returnRoutes }: { ret
     const meta = route?.carrier_meta?.[key];
     const quality = classifyReturnRoute(meta?.route_type || displayName);
     const time = meta?.probed_at || (typeof route?.probed_at === "string" ? route.probed_at : "");
-    const region = typeof route?.region === "string" ? route.region : "未记录";
-    const source = typeof route?.source === "string" ? route.source : (manual ? "未记录" : "服务器探针");
+    const region = meta?.region || (typeof route?.region === "string" ? route.region : "未记录");
+    const source = meta?.source || (typeof route?.source === "string" ? route.source : (manual ? "未记录" : "服务器探针"));
     const reason = meta?.status === "held" ? "线路变化等待连续两天确认，沿用上次有效记录"
       : meta?.status === "failed" ? "本次未取得有效新证据，沿用上次记录"
       : meta?.reason === "observed backbone/transit ASN evidence" ? "已识别骨干和国际段 ASN；不据此确认终点可达"

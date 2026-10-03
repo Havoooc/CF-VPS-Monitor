@@ -7,7 +7,7 @@ export function normalizeRouteMeta(input) {
     const source = input[carrier];
     if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
     const meta = {};
-    for (const key of [...dates, 'status', 'route_type', 'quality', 'confidence', 'reason']) {
+    for (const key of [...dates, 'status', 'route_type', 'quality', 'confidence', 'reason', 'region', 'source']) {
       const value = source[key];
       if (value == null) continue;
       if (typeof value !== 'string' || value.length > 500 || /[\x00-\x1f]/.test(value)) throw new Error('invalidRouteMetadata');

@@ -20,7 +20,12 @@ LOCK = Path("/run/lock/cfsm-forward-route-update.lock")
 CARRIERS = {
     "telecom": "e88712a7-5da2-45fe-a22b-97dc5c62600b",
     "unicom": "5616de3a-0f66-4d3c-9508-47dc081a650c",
-    "mobile": "0d400955-d04f-4940-a388-dfa2ffcd4e08",
+    "mobile": "9b35c875-3d28-4345-a82b-343b916791d9",
+}
+CARRIER_REGIONS = {
+    "telecom": "浙江温州电信第三方探测点",
+    "unicom": "浙江温州联通第三方探测点",
+    "mobile": "浙江宁波移动第三方探测点",
 }
 SERVERS = {
     "218776b9-adda-404f-a34a-7673c43a8c3a": ("45.142.125.101", "2a12:a301:2001::10dd"),
@@ -135,6 +140,9 @@ def poll_task(task):
         if final is None:
             return None
         candidate = summarize(final, task["carrier"])
+        if candidate:
+            candidate["region"] = task["region"]
+            candidate["source"] = "TCPTest 每日自动路由探测"
         return {**task, "candidate": candidate}
     except Exception:
         return None
@@ -175,7 +183,8 @@ def main():
             families = [("ipv4", addresses[0]), ("ipv6", addresses[1])]
             for family, target in families:
                 for carrier in CARRIERS:
-                    tasks.append({"server_id": server_id, "family": family, "carrier": carrier, "target": target})
+                    tasks.append({"server_id": server_id, "family": family, "carrier": carrier, "target": target,
+                                  "region": CARRIER_REGIONS[carrier]})
         nodes = load_nodes()
         for task in tasks:
             task["node_checked"] = nodes is not None
@@ -232,7 +241,7 @@ def main():
         for task in tasks:
             family = cached.setdefault(task["family"], {})
             changed += merge_candidate(family, task["carrier"], by_key.get((task["family"], task["carrier"])), stamp)
-            family.update(region="浙江温州第三方探测点", source="TCPTest 每日自动路由探测", last_attempt_at=stamp)
+            family.update(region="浙江三网第三方探测点", source="TCPTest 每日自动路由探测", last_attempt_at=stamp)
         atomic_save(cached)
         log(f"FINISH submitted={len(created)}/{len(tasks)} results={len(results)} routes_updated={changed} pending={len(pending) + len(retry_pending)} retry_submitted={len(retries)}")
     return 0

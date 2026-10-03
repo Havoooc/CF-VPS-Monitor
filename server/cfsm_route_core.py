@@ -75,6 +75,9 @@ def merge_candidate(record, carrier, candidate, stamp):
     record[carrier] = route
     current.update(probed_at=stamp, status='ok', route_type=new_type, quality=quality(new_type),
                    confidence=candidate.get('confidence', 'medium'), reason=candidate.get('reason', ''))
+    for field in ('region', 'source'):
+        if candidate.get(field):
+            current[field] = candidate[field]
     if isinstance(candidate.get('destination_reached'), bool):
         current['destination_reached'] = candidate['destination_reached']
     else:
