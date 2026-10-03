@@ -27,7 +27,7 @@ export function RouteSummary({ returnRoute, forwardRoutes, returnRoutes }: { ret
     return <details className="route-cell">
       <summary title={title}><span className={clsx("return-route-summary-badge", `is-${quality}`)}>{name}</span></summary>
       <div className="route-cell-details">
-        <div>{route?.source ? "测量记录" : (manual ? "手动记录" : "探针检测")}</div>
+        <div>{/^(TCPTest|NextTrace)/.test(source) ? "测量记录" : (manual ? "手动记录" : "探针检测")}</div>
         <div>地点：{region}</div>
         <div>来源：{source}</div>
         <div>时间：{time ? new Date(time).toLocaleString() : "未记录"}</div>
