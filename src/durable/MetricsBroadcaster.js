@@ -1,3 +1,5 @@
+import { persistRouteSnapshots } from "../handlers/update.js";
+import { normalizeReturnRoute } from "../utils/metrics.js";
 // Durable Object: 服务器监控指标广播中心
 // 负责维护 WebSocket 连接并在收到新指标时向订阅者实时推送
 //
@@ -1344,6 +1346,18 @@ export class MetricsBroadcaster {
     this.agentHistoryWrites.set(serverId, state);
     try {
       const metrics = applyHistoryMetricAggregates(payload.metrics, aggregateForWrite);
+      await persistRouteSnapshots(this.env.DB, serverId, payload.metrics);
+      const returnRoute = normalizeReturnRoute(payload.metrics.return_route);
+      if (returnRoute) {
+        const detail = await this._getAgentServerDetail(serverId);
+        const serialized = JSON.stringify(returnRoute);
+        if (serialized !== JSON.stringify(normalizeReturnRoute(detail?.return_route))) {
+          await this.env.DB.prepare("UPDATE servers SET return_route = ? WHERE id = ? AND COALESCE(return_route, '') <> ?")
+            .bind(serialized, serverId, serialized).run();
+          if (detail) detail.return_route = serialized;
+          clearServerDetailCache();
+        }
+      }
       await saveMetricsHistory(
         this.env.DB,
         serverId,

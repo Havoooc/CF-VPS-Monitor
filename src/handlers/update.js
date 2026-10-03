@@ -40,6 +40,43 @@ import {
   UPDATE_RESOURCE_ALERT_BATCH_WINDOW_MS
 } from '../utils/config.js';
 
+export async function persistRouteSnapshots(db, id, latestMetrics) {
+    const returnRouteV6 = normalizeReturnRoute(latestMetrics.return_route_ipv6);
+    if (returnRouteV6) {
+      const allRoutes = await getMeasuredReturnRoutes(db);
+      const routes = allRoutes[id] || { ipv4: {}, ipv6: {} };
+      const nextRoute = {
+        telecom: returnRouteV6.telecom,
+        unicom: returnRouteV6.unicom,
+        mobile: returnRouteV6.mobile,
+        ...(returnRouteV6.region ? { region: returnRouteV6.region } : {}),
+        source: '服务器每日 IPv6 回程探针',
+        ...(returnRouteV6.probed_at ? { probed_at: returnRouteV6.probed_at } : {})
+      };
+      if (JSON.stringify(routes.ipv6 || {}) !== JSON.stringify(nextRoute)) {
+        routes.ipv6 = nextRoute;
+        await saveMeasuredReturnRoutes(db, id, routes);
+      }
+    }
+    if (latestMetrics.forward_routes && typeof latestMetrics.forward_routes === 'object') {
+      try {
+        const incoming = normalizeForwardRoutes(latestMetrics.forward_routes);
+        const hasRoutes = ['ipv4', 'ipv6'].some(family => ['telecom', 'unicom', 'mobile'].some(carrier => incoming[family][carrier]));
+        if (hasRoutes) {
+          const allForwardRoutes = await getForwardRoutes(db);
+          const previous = allForwardRoutes[id] || { ipv4: {}, ipv6: {} };
+          const next = {
+            ipv4: { ...previous.ipv4, ...incoming.ipv4 },
+            ipv6: { ...previous.ipv6, ...incoming.ipv6 }
+          };
+          if (JSON.stringify(previous) !== JSON.stringify(next)) await saveForwardRoutes(db, id, next);
+        }
+      } catch (error) {
+        console.warn('[Update] 忽略无效的去程线路上报:', error?.message || error);
+      }
+    }
+}
+
 // 将最新一次上报打包成前端可直接消费的 "当前状态" 对象
 // 与 /api/server 和 /api/servers 返回的字段保持一致，便于页面直接合并
 function buildPayloadForBroadcast(id, metrics = {}, extra = {}) {
@@ -664,40 +701,7 @@ export async function handleUpdate(request, env, ctx) {
         patchServerDetailCache(id, { return_route: serializedRoute });
       }
     }
-    const returnRouteV6 = normalizeReturnRoute(latestMetrics.return_route_ipv6);
-    if (returnRouteV6) {
-      const allRoutes = await getMeasuredReturnRoutes(env.DB);
-      const routes = allRoutes[id] || { ipv4: {}, ipv6: {} };
-      const nextRoute = {
-        telecom: returnRouteV6.telecom,
-        unicom: returnRouteV6.unicom,
-        mobile: returnRouteV6.mobile,
-        ...(returnRouteV6.region ? { region: returnRouteV6.region } : {}),
-        source: '服务器每日 IPv6 回程探针',
-        ...(returnRouteV6.probed_at ? { probed_at: returnRouteV6.probed_at } : {})
-      };
-      if (JSON.stringify(routes.ipv6 || {}) !== JSON.stringify(nextRoute)) {
-        routes.ipv6 = nextRoute;
-        await saveMeasuredReturnRoutes(env.DB, id, routes);
-      }
-    }
-    if (latestMetrics.forward_routes && typeof latestMetrics.forward_routes === 'object') {
-      try {
-        const incoming = normalizeForwardRoutes(latestMetrics.forward_routes);
-        const hasRoutes = ['ipv4', 'ipv6'].some(family => ['telecom', 'unicom', 'mobile'].some(carrier => incoming[family][carrier]));
-        if (hasRoutes) {
-          const allForwardRoutes = await getForwardRoutes(env.DB);
-          const previous = allForwardRoutes[id] || { ipv4: {}, ipv6: {} };
-          const next = {
-            ipv4: { ...previous.ipv4, ...incoming.ipv4 },
-            ipv6: { ...previous.ipv6, ...incoming.ipv6 }
-          };
-          if (JSON.stringify(previous) !== JSON.stringify(next)) await saveForwardRoutes(env.DB, id, next);
-        }
-      } catch (error) {
-        console.warn('[Update] 忽略无效的去程线路上报:', error?.message || error);
-      }
-    }
+    await persistRouteSnapshots(env.DB, id, latestMetrics);
     await saveMetricsHistory(
       env.DB,
       id,
