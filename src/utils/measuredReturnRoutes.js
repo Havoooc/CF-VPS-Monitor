@@ -25,7 +25,7 @@ export async function getMeasuredReturnRoutes(db) {
   const routes = {};
   for (const row of results || []) {
     if (!row.key?.startsWith('return_snapshot:')) continue;
-    try { routes[row.key.slice(16)] = normalizeMeasuredReturnRoutes(JSON.parse(row.value)); } catch {}
+    try { routes[row.key.slice(15)] = normalizeMeasuredReturnRoutes(JSON.parse(row.value)); } catch {}
   }
   cache = routes;
   expires = Date.now() + 30000;
