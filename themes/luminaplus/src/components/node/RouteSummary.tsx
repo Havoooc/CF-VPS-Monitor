@@ -24,7 +24,11 @@ export function RouteSummary({ returnRoute, forwardRoutes, returnRoutes }: { ret
     const time = meta?.probed_at || (typeof route?.probed_at === "string" ? route.probed_at : "");
     const region = typeof route?.region === "string" ? route.region : "未记录";
     const source = typeof route?.source === "string" ? route.source : (manual ? "未记录" : "服务器探针");
-    const title = returnRouteTitle(displayName, quality, { carrierKey: key, probedAt: time || undefined, confidence: meta?.confidence, reason: meta?.reason }).replace("回程线路", manual ? "去程线路" : "回程线路");
+    const reason = meta?.status === "held" ? "线路变化等待连续两天确认，沿用上次有效记录"
+      : meta?.status === "failed" ? "本次未取得有效新证据，沿用上次记录"
+      : meta?.reason === "observed backbone/transit ASN evidence" ? "已识别骨干和国际段 ASN；不据此确认终点可达"
+      : meta?.reason === "destination reached; ASN evidence" ? "已到达探测终点，并取得 ASN 证据" : meta?.reason;
+    const title = returnRouteTitle(displayName, quality, { carrierKey: key, probedAt: time || undefined, confidence: meta?.confidence, reason }).replace("回程线路", manual ? "去程线路" : "回程线路");
     return <details className="route-cell">
       <summary title={title}><span className={clsx("return-route-summary-badge", `is-${quality}`)}>{displayName}</span></summary>
       <div className="route-cell-details">

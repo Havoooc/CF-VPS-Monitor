@@ -18,7 +18,7 @@ export async function persistRouteReport(env, id, metrics, detail, ctx) {
   const operations = [
     async () => {
       if (!metrics.return_route || typeof metrics.return_route !== 'object') return;
-      const incoming = normalizeMeasuredReturnRoutes({ ipv4: metrics.return_route }).ipv4;
+      const incoming = { ...normalizeReturnRoute(metrics.return_route), ...normalizeMeasuredReturnRoutes({ ipv4: metrics.return_route }).ipv4 };
       for (const [key] of carriers) if (incoming[key] && !RETURN_ROUTE_ALLOWED_VALUES.has(incoming[key])) delete incoming[key];
       if (!carriers.some(([key]) => incoming[key])) return;
       const previous = normalizeReturnRoute(detail?.return_route);
