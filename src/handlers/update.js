@@ -13,6 +13,7 @@ import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { getResourceAlertConfig, getWssReportScheduleState, isWssReportConfigured, loadSiteSettings, normalizeBooleanSetting } from '../utils/settings.js';
 import { sendNotification } from '../services/notification.js';
 import { getMeasuredReturnRoutes, saveMeasuredReturnRoutes } from '../utils/measuredReturnRoutes.js';
+import { getForwardRoutes, normalizeForwardRoutes, saveForwardRoutes } from '../utils/forwardRoutes.js';
 import { cacheLatestReportUpdate } from '../utils/latestReportCache.js';
 import {
   hasRecentFrontendRealtimeActivity,
@@ -678,6 +679,23 @@ export async function handleUpdate(request, env, ctx) {
       if (JSON.stringify(routes.ipv6 || {}) !== JSON.stringify(nextRoute)) {
         routes.ipv6 = nextRoute;
         await saveMeasuredReturnRoutes(env.DB, id, routes);
+      }
+    }
+    if (latestMetrics.forward_routes && typeof latestMetrics.forward_routes === 'object') {
+      try {
+        const incoming = normalizeForwardRoutes(latestMetrics.forward_routes);
+        const hasRoutes = ['ipv4', 'ipv6'].some(family => ['telecom', 'unicom', 'mobile'].some(carrier => incoming[family][carrier]));
+        if (hasRoutes) {
+          const allForwardRoutes = await getForwardRoutes(env.DB);
+          const previous = allForwardRoutes[id] || { ipv4: {}, ipv6: {} };
+          const next = {
+            ipv4: { ...previous.ipv4, ...incoming.ipv4 },
+            ipv6: { ...previous.ipv6, ...incoming.ipv6 }
+          };
+          if (JSON.stringify(previous) !== JSON.stringify(next)) await saveForwardRoutes(env.DB, id, next);
+        }
+      } catch (error) {
+        console.warn('[Update] 忽略无效的去程线路上报:', error?.message || error);
       }
     }
     await saveMetricsHistory(
