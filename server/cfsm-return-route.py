@@ -16,7 +16,7 @@ CFSM 三网回程探测 v3
      负向结论（普通国际，即「没看到」）一律 low——骨干跳不响应 ICMP 是常态，
      一次采样没命中说明不了线路变了。更新器据此区别对待：high 立即翻转，
      low 要求「连续多次同向」才翻转（见 cfsm-route-update.sh 的 CFSM_FLIP_CONFIRM）。
-  E. CN2 用 59.43 / 202.97 IP 段判定，可选区分 GIA / GT
+  E. CN2 用 ASN / IP 段判定，不推断 GIA / GT
   F. 三网并发探测，最坏耗时从 165s 降到 55s
   G. 国内路径识别：全程落在境内的机器（如阿里云杭州）不存在「国际回程」，
      输出「国内电信 / 国内联通 / 国内移动」，避免给出字面错误的「普通国际」
@@ -33,10 +33,6 @@ from datetime import datetime, timezone
 
 NEXTTRACE = "/usr/local/bin/nexttrace"
 PROBE_TIMEOUT = 55          # 单次 trace 上限（秒）
-SPLIT_CN2 = False           # False：CN2 一律输出 CN2GIA，值域与旧版一致，主题无需改
-                            # True ：额外区分 CN2GT。注意实测单次采样不足以判定
-                            #        GIA/GT（VMISS 两次采样一次 GT 一次 GIA），
-                            #        开启前应先要求「连续多次采样一致」
 RETRY_ON_LOW = True         # 低置信时重探一次并合并证据
                             # 骨干中间跳不响应是随机的，采样两次可显著补齐证据
 

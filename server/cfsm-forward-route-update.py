@@ -51,7 +51,34 @@ def request_json(url, body=None, timeout=15):
         return json.load(response)
 
 
+def load_nodes():
+    nodes, cursor = {}, 0
+    try:
+        for _ in range(8):
+            response = request_json(f"https://www.tcptest.cn/api/v1/nodes?after={cursor}&limit=100")
+            for node in response.get("nodes", []):
+                nodes[node.get("uuid")] = node
+            if all(uuid in nodes for uuid in CARRIERS.values()) or not response.get("has_more"):
+                return nodes
+            next_cursor = response.get("next_cursor")
+            if not isinstance(next_cursor, int) or next_cursor <= cursor:
+                return None
+            cursor = next_cursor
+    except Exception as error:
+        log(f"NODE_PREFLIGHT unavailable={type(error).__name__}; final task success remains required")
+    return None
+
+
+def node_available(node, family):
+    return bool(node and node.get("enabled") is True and node.get("runtime_state") == "online"
+                and (node.get("capabilities") or {}).get("traceroute") is True
+                and (family != "ipv6" or (node.get("capabilities") or {}).get("ipv6") is True)
+
+
 def create_task(task):
+    if task.get("node_checked") and not node_available(task.get("node"), task["family"]):
+        log(f"SUBMIT {task['family']} {task['carrier']} skipped=node_unavailable")
+        return None
     body = {
         "type": "traceroute",
         "target": task["target"],
@@ -149,6 +176,10 @@ def main():
             for family, target in families:
                 for carrier in CARRIERS:
                     tasks.append({"server_id": server_id, "family": family, "carrier": carrier, "target": target})
+        nodes = load_nodes()
+        for task in tasks:
+            task["node_checked"] = nodes is not None
+            task["node"] = (nodes or {}).get(CARRIERS[task["carrier"]])
         created = []
         with ThreadPoolExecutor(max_workers=4) as pool:
             futures = [pool.submit(create_task, task) for task in tasks]
@@ -158,7 +189,6 @@ def main():
                     created.append(task)
         if not created:
             log("REJECT no_tasks_created; cached routes kept")
-            return 0
 
         pending = {task["task_id"]: task for task in created}
         results = []
@@ -204,7 +234,7 @@ def main():
             changed += merge_candidate(family, task["carrier"], by_key.get((task["family"], task["carrier"])), stamp)
             family.update(region="浙江温州第三方探测点", source="TCPTest 每日自动路由探测", last_attempt_at=stamp)
         atomic_save(cached)
-        log(f"FINISH submitted={len(created)}/{len(tasks)} results={len(results)} routes_updated={changed} pending={len(pending)}")
+        log(f"FINISH submitted={len(created)}/{len(tasks)} results={len(results)} routes_updated={changed} pending={len(pending) + len(retry_pending)} retry_submitted={len(retries)}")
     return 0
 
 

@@ -74,8 +74,11 @@ def merge_candidate(record, carrier, candidate, stamp):
             return False
     record[carrier] = route
     current.update(probed_at=stamp, status='ok', route_type=new_type, quality=quality(new_type),
-                   confidence=candidate.get('confidence', 'medium'), reason=candidate.get('reason', ''),
-                   destination_reached=bool(candidate.get('destination_reached')))
+                   confidence=candidate.get('confidence', 'medium'), reason=candidate.get('reason', ''))
+    if isinstance(candidate.get('destination_reached'), bool):
+        current['destination_reached'] = candidate['destination_reached']
+    else:
+        current.pop('destination_reached', None)
     current.pop('pending_value', None)
     current.pop('pending_count', None)
     current.pop('pending_day', None)

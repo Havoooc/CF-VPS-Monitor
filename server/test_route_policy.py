@@ -8,6 +8,13 @@ forward = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(forward)
 
 class RoutePolicyTests(unittest.TestCase):
+    def test_node_capability_and_online_checks(self):
+        node = {'enabled': True, 'runtime_state': 'online', 'capabilities': {'traceroute': True, 'ipv6': False}}
+        self.assertTrue(forward.node_available(node, 'ipv4'))
+        self.assertFalse(forward.node_available(node, 'ipv6'))
+        node['runtime_state'] = 'offline'
+        self.assertFalse(forward.node_available(node, 'ipv4'))
+
     def test_mobile_asn_does_not_infer_n2_from_name(self):
         self.assertEqual(route_type('mobile', ['58453']), 'CMI')
         self.assertEqual(route_type('mobile', ['58807']), 'CMIN2')

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 兼容旧接口的薄包装（待部署）
+# 兼容旧接口的薄包装
 #
 # 保留原 cfsm-return-route.sh 的调用约定：
 #   cfsm-return-route.sh [region]  -> stdout 输出 JSON
