@@ -26,6 +26,7 @@ SERVERS = {
     "6d63ca9f-9064-4774-a569-61b718e7443d": ("207.57.142.44", "2602:f656:5::2a3"),
     "e4ab883d-ef3a-46ff-8468-f5800e93f5b1": ("24.249.30.16", "2001:57a:f200:b920::18f"),
 }
+TRANSIT_LABELS = {"3257": "GTT", "1299": "Arelion", "3356": "Lumen", "17676": "SoftBank", "22773": "Cox"}
 AS_LABELS = {
     "telecom": {"4809": "CN2", "4134": "163", "136190": "CT"},
     "unicom": {"9929": "9929", "10099": "10099", "4837": "4837"},
@@ -75,9 +76,12 @@ def summarize(result, carrier):
     labels = []
     for hop in hops:
         asn = str(hop.get("asn") or "").removeprefix("AS")
-        if not asn:
+        if carrier == "telecom" and str(hop.get("ip") or "").startswith("59.43."):
+            label = "CN2"
+        elif asn:
+            label = AS_LABELS[carrier].get(asn, TRANSIT_LABELS.get(asn, f"AS{asn}"))
+        else:
             continue
-        label = AS_LABELS[carrier].get(asn, f"AS{asn}")
         if labels[-1:] != [label]:
             labels.append(label)
     return " → ".join(labels)[:160]
