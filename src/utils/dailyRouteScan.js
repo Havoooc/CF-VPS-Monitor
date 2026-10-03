@@ -30,7 +30,7 @@ async function writeState(db, state) {
     .bind(STATE_KEY, JSON.stringify(state)).run();
 }
 async function fetchJson(url, init) {
-  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(12000), headers: { 'User-Agent': 'CF-VPS-Monitor/2.8', ...(init?.headers || {}) } });
+  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(12000), headers: { 'User-Agent': 'Mozilla/5.0', ...(init?.headers || {}) } });
   if (!response.ok) throw new Error(`routeProbeHttp${response.status}`);
   return response.json();
 }
