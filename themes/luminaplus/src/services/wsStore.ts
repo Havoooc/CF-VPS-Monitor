@@ -311,7 +311,9 @@ function shallowEqualNodeInfo(a: NodeInfo, b: NodeInfo) {
     a.traffic_reset_day === b.traffic_reset_day &&
     a.report_interval === b.report_interval &&
     a.agent_version === b.agent_version &&
-    sameReturnRoute(a.return_route, b.return_route)
+    sameReturnRoute(a.return_route, b.return_route) &&
+    JSON.stringify(a.forward_routes) === JSON.stringify(b.forward_routes) &&
+    JSON.stringify(a.return_routes) === JSON.stringify(b.return_routes)
     // updated_at 是未展示的心跳字段，不应触发整个节点列表重渲染。
   );
 }

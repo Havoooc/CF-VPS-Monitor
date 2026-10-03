@@ -349,6 +349,7 @@ export function toNodeInfo(server: CfsmServer): NodeInfo {
     agent_version: server.agent_version,
     return_route: parseReturnRoute(server.return_route),
     forward_routes: server.forward_routes ?? undefined,
+    return_routes: server.return_routes ?? undefined,
     // 公共接口只给可达性标记，不给具体地址。
     ipv4: String(server.ip_v4) === "1" ? "1" : "",
     ipv6: String(server.ip_v6) === "1" ? "1" : "",

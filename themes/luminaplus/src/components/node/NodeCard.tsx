@@ -159,7 +159,7 @@ export const NodeCard = memo(function NodeCard({
               lines={homepagePingLines}
               density="large"
               returnRoute={node.return_route}
-              forwardRoutes={node.forward_routes}
+              forwardRoutes={node.forward_routes} returnRoutes={node.return_routes}
               className="card-metric-section"
             />
           ) : (
@@ -176,7 +176,7 @@ export const NodeCard = memo(function NodeCard({
             />
           )}
           {homepagePingLines.length === 0 && (
-            <RouteSummary returnRoute={node.return_route} forwardRoutes={node.forward_routes} />
+            <RouteSummary returnRoute={node.return_route} forwardRoutes={node.forward_routes} returnRoutes={node.return_routes} />
           )}
 
         </div>

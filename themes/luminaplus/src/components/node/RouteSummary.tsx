@@ -9,24 +9,25 @@ const RETURN_ROUTE_CARRIERS = [
   { key: "mobile", label: "移动" },
 ] as const;
 
-export function RouteSummary({ returnRoute, forwardRoutes }: { returnRoute?: ReturnRoute; forwardRoutes?: ForwardRoutes }) {
+export function RouteSummary({ returnRoute, forwardRoutes, returnRoutes }: { returnRoute?: ReturnRoute; forwardRoutes?: ForwardRoutes; returnRoutes?: ForwardRoutes }) {
   const [family, setFamily] = useState<"ipv4" | "ipv6">("ipv4");
   const forward = forwardRoutes?.[family];
   // Existing probe results use IPv4 unless explicitly marked otherwise.
-  const reverse = (returnRoute?.ip_version === "ipv6" ? family === "ipv6" : family === "ipv4") ? returnRoute : undefined;
+  const reverse = returnRoutes?.[family] ?? ((returnRoute?.ip_version === "ipv6" ? family === "ipv6" : family === "ipv4") ? returnRoute : undefined);
 
   function routeCell(route: ReturnRoute | undefined, key: "telecom" | "unicom" | "mobile", manual: boolean) {
     const name = route?.[key]?.trim();
     if (!name) return <span className="route-pending">待检测</span>;
-    const quality = classifyReturnRoute(name);
+    const incomplete = /未完整|未知|未确认/.test(name);
+    const quality = incomplete ? "standard" : classifyReturnRoute(name);
     const time = typeof route?.probed_at === "string" ? route.probed_at : "";
     const region = typeof route?.region === "string" ? route.region : "未记录";
-    const source = manual ? (typeof route?.source === "string" ? route.source : "未记录") : "服务器探针";
-    const title = returnRouteTitle(name, quality, { carrierKey: key, probedAt: time || undefined });
+    const source = typeof route?.source === "string" ? route.source : (manual ? "未记录" : "服务器探针");
+    const title = incomplete ? `${name}；探测未完整，不能据此判断不通` : returnRouteTitle(name, quality, { carrierKey: key, probedAt: time || undefined });
     return <details className="route-cell">
       <summary title={title}><span className={clsx("return-route-summary-badge", `is-${quality}`)}>{name}</span></summary>
       <div className="route-cell-details">
-        <div>{manual ? "手动记录" : "探针检测"}</div>
+        <div>{route?.source ? "测量记录" : (manual ? "手动记录" : "探针检测")}</div>
         <div>地点：{region}</div>
         <div>来源：{source}</div>
         <div>时间：{time ? new Date(time).toLocaleString() : "未记录"}</div>

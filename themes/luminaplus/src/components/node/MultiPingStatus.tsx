@@ -227,6 +227,7 @@ export const MultiPingStatus = memo(function MultiPingStatus({
   className,
   returnRoute,
   forwardRoutes,
+  returnRoutes,
 }: {
   uuid: string;
   lines: HomepagePingDisplayLine[];
@@ -234,6 +235,7 @@ export const MultiPingStatus = memo(function MultiPingStatus({
   className?: string;
   returnRoute?: ReturnRoute;
   forwardRoutes?: ForwardRoutes;
+  returnRoutes?: ForwardRoutes;
 }) {
   const { resolvedAppearance } = usePreferences();
   const colorsVersion = useMetricColorsVersion();
@@ -262,7 +264,7 @@ export const MultiPingStatus = memo(function MultiPingStatus({
               />
             ))}
           </div>
-          <RouteSummary returnRoute={returnRoute} forwardRoutes={forwardRoutes} />
+          <RouteSummary returnRoute={returnRoute} forwardRoutes={forwardRoutes} returnRoutes={returnRoutes} />
         </div>
       ) : (
         <>
@@ -270,7 +272,7 @@ export const MultiPingStatus = memo(function MultiPingStatus({
             <MultiPingMetricColumn uuid={uuid} lines={lines} metric="latency" density={density} redrawKey={redrawKey} />
             <MultiPingMetricColumn uuid={uuid} lines={lines} metric="loss" density={density} redrawKey={redrawKey} />
           </div>
-          <RouteSummary returnRoute={returnRoute} forwardRoutes={forwardRoutes} />
+          <RouteSummary returnRoute={returnRoute} forwardRoutes={forwardRoutes} returnRoutes={returnRoutes} />
         </>
       )}
     </div>

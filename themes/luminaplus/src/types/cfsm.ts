@@ -166,6 +166,7 @@ export const CfsmServerSchema = z
     boot_time: looseString.default(""),
     agent_version: looseString.default(""),
     return_route: ReturnRouteSchema.nullish(),
+    return_routes: z.object({ ipv4: ReturnRouteSchema.optional(), ipv6: ReturnRouteSchema.optional() }).nullish(),
     forward_routes: z.object({ ipv4: ReturnRouteSchema.optional(), ipv6: ReturnRouteSchema.optional() }).nullish(),
     last_updated: looseNumber.default(0),
     timestamp: looseNumber.default(0),
@@ -389,6 +390,7 @@ export interface NodeInfo {
   /** 节点到浙江电信/联通/移动探测点的回程线路类型。 */
   return_route?: ReturnRoute;
   forward_routes?: ForwardRoutes;
+  return_routes?: ForwardRoutes;
   /** CF-Server-Monitor 只下发可达性，不下发具体地址。 */
   ipv4: string;
   ipv6: string;
