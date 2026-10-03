@@ -20,7 +20,7 @@ describe("route comparison", () => {
   it("shows only the best carrier grade and switches address families", async () => {
     const container = document.createElement("div");
     const root = createRoot(container);
-    await act(async () => { root.render(<RouteSummary returnRoute={{ telecom: "CN2 GIA" }} forwardRoutes={{ ipv4: { telecom: "普通国际 → CN2 → AS4809", unicom: "4837 → 9929 → AS9929", mobile: "CMI → CMIN2 → AS58807" }, ipv6: { telecom: "CMI → AS58453" } }} />); });
+    await act(async () => { root.render(<RouteSummary returnRoute={{ telecom: "CN2 GIA" }} forwardRoutes={{ ipv4: { telecom: "普通国际 → CN2 → AS4809", unicom: "4837 → 9929 → AS9929", mobile: "CMI → CMIN2 → AS58807" }, ipv6: { mobile: "CMI → AS58453" } }} />); });
     expect(container.textContent).toContain("CN2");
     expect(container.textContent).toContain("9929");
     expect(container.textContent).toContain("CMIN2");
