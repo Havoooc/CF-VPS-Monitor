@@ -39,8 +39,18 @@ function bestRouteLabel(route: ReturnRoute | undefined, key: CarrierKey) {
 export function RouteSummary({ returnRoute, forwardRoutes, returnRoutes, hasPublicIPv6 = true }: { returnRoute?: ReturnRoute; forwardRoutes?: ForwardRoutes; returnRoutes?: ForwardRoutes; hasPublicIPv6?: boolean }) {
   const [family, setFamily] = useState<"ipv4" | "ipv6">("ipv4");
   const forward = forwardRoutes?.[family];
-  // Existing probe results use IPv4 unless explicitly marked otherwise.
-  const reverse = returnRoutes?.[family] ?? ((returnRoute?.ip_version === "ipv6" ? family === "ipv6" : family === "ipv4") ? returnRoute : undefined);
+  // 单份 return_route 是 IPv4 探针的结果（后端 probe 固定 -4），只在 IPv4 页签下作为兜底。
+  const reverse = returnRoutes?.[family] ?? (family === "ipv4" ? returnRoute : undefined);
+
+  // 两个地址族的去程/回程都没有任何已识别线路时不渲染：没装探针或全新节点会因此
+  // 少一整块 6 行「待检测」空壳。这里按「任一族有数据」判断，避免初始停在不含数据的
+  // 页签时整块被隐藏、用户也就没机会切换到有数据的页签。
+  const hasAnyRoute =
+    (["ipv4", "ipv6"] as const).some(candidate =>
+      RETURN_ROUTE_CARRIERS.some(({ key }) =>
+        bestRouteLabel(forwardRoutes?.[candidate], key) || bestRouteLabel(returnRoutes?.[candidate], key))) ||
+    RETURN_ROUTE_CARRIERS.some(({ key }) => bestRouteLabel(returnRoute, key));
+  if (!hasAnyRoute) return null;
 
   function routeCell(route: ReturnRoute | undefined, key: CarrierKey) {
     const displayName = bestRouteLabel(route, key);

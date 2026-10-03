@@ -35,5 +35,28 @@ test('carrier timestamps survive normalization and older reports cannot roll bac
   assert.equal(merged.carrier_meta.telecom.probed_at, previous.carrier_meta.telecom.probed_at);
   assert.equal(merged.carrier_meta.telecom.last_attempt_at, '2026-10-04T00:00:00Z');
   assert.equal(normalizeForwardRoutes({ ipv4: merged }).ipv4.carrier_meta.telecom.status, 'failed');
-  assert.throws(() => normalizeForwardRoutes({ ipv4: { carrier_meta: { telecom: { probed_at: 'invalid' } } } }));
+});
+
+test('carrier meta drops only the malformed field instead of rejecting the record', () => {
+  // 整条记录被拒 = 这次上报的该族路由全部跳过，代价远大于丢掉一个坏字段。
+  const sanitized = normalizeForwardRoutes({
+    ipv4: { telecom: 'CN2', carrier_meta: { telecom: { probed_at: 'invalid', reason: '证据段无联通骨干' } } }
+  });
+  assert.equal(sanitized.ipv4.telecom, 'CN2');
+  assert.equal(sanitized.ipv4.carrier_meta.telecom.probed_at, undefined);
+  assert.equal(sanitized.ipv4.carrier_meta.telecom.reason, '证据段无联通骨干');
+});
+
+test('route_path is dropped from new and legacy records', async () => {
+  const { normalizeRouteMeta, stripRoutePaths, mergeRouteRecord } = await import('../src/utils/routeRecord.js');
+  // 新数据：白名单里已经没有 route_path。
+  assert.equal(normalizeRouteMeta({ telecom: { route_path: 'AS4809 → AS4134', status: 'ok' } }).telecom.route_path, undefined);
+  // 历史残留：合并与出口都会剥掉（含以 JSON 字符串形态存放的 servers.return_route）。
+  const legacy = { telecom: 'CN2', carrier_meta: { telecom: { probed_at: '2026-10-03T00:00:00Z', route_path: 'AS4809' } } };
+  const merged = mergeRouteRecord(legacy, { telecom: 'CN2', carrier_meta: { telecom: { probed_at: '2026-10-03T00:00:00Z' } } });
+  assert.equal(merged.carrier_meta.telecom.route_path, undefined);
+  const asString = stripRoutePaths(JSON.stringify(legacy));
+  assert.equal(typeof asString, 'string');
+  assert.equal(asString.includes('route_path'), false);
+  assert.equal(JSON.parse(asString).carrier_meta.telecom.probed_at, '2026-10-03T00:00:00Z');
 });

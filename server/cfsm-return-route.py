@@ -170,6 +170,8 @@ def merge_hop_lists(a, b):
     """
     by_ttl = {}
     for h in a + b:
+        if h.get("ttl") is None:
+            continue
         cur = by_ttl.get(h["ttl"])
         if cur is None or _hop_score(h) > _hop_score(cur):
             by_ttl[h["ttl"]] = h
@@ -197,30 +199,50 @@ def _retry_worthwhile(carrier, ev):
 
 
 def probe_carrier(carrier, host, fallback=None):
-    """探测单个运营商，低置信或无结论时尝试备选目标重探并合并；返回 (ev, err)"""
+    """探测单个运营商，返回 (ev, err)。
+
+    重探分两种情况，做法不同，不能混：
+
+    1. 同一目标重探（证据不足 / 档位歧义）：两次都打同一个 hostname，跳表按 TTL
+       合并才有意义——骨干中间跳是否响应是随机的，并集能补齐单次采样漏掉的跳。
+    2. 备选目标重探（初次完全没拿到可用路径）：换 fallback 目标再试一次。换目标后
+       **不合并**：两条路径的目的地根本不同，跳表没有可比性，合并会让 dest_asn /
+       tail_cut 取到备选目标自己的 AS，把真证据当尾部切掉，或被备选链上的骨干跳
+       污染成假证据。直接采用新结果并标记 retry_target。
+
+    历史实现把这两件事混在一起（重探目标写成 `fallback if (… or not ev.get(
+    "decisive"))`，而 analyse 的返回值里根本没有 decisive 键），导致每次触发重探
+    都会换成备选 IP，再和原目标的跳表合并——这是误判的主要来源。
+    """
     ok, obj, err = run_probe(host)
     hops = build_hops(obj) if ok else []
     ev = analyse(hops) if hops else None
 
-    # 如果初次探测失败，或者结果证据不足需要重探
-    if RETRY_ON_LOW and (ev is None or _retry_worthwhile(carrier, ev)):
-        target2 = fallback if (fallback and (ev is None or not ev.get("decisive"))) else host
-        ok2, obj2, err2 = run_probe(target2)
+    if ev is None:
+        # 只有「初次完全没有可用路径」才值得换目标，且用换完的结果、不做合并。
+        if fallback:
+            ok2, obj2, err2 = run_probe(fallback)
+            hops2 = build_hops(obj2) if ok2 else []
+            ev2 = analyse(hops2) if hops2 else None
+            if ev2 is not None:
+                ev2["retried"] = True
+                ev2["retry_target"] = "fallback"
+                return ev2, ""
+            err = err2 or err
+        return None, err or "no_resolved_hop"
+
+    if RETRY_ON_LOW and _retry_worthwhile(carrier, ev):
+        ok2, obj2, _err2 = run_probe(host)   # 必须打同一个目标，合并才有意义
         if ok2:
             hops2 = build_hops(obj2)
-            if not hops:
-                ev = analyse(hops2)
-                if ev is not None:
-                    ev["retried"] = True
-            else:
+            if hops2:
                 merged = merge_hop_lists(hops, hops2)
                 ev2 = analyse(merged)
                 if ev2 is not None:
+                    ev2["retried"] = True
+                    ev2["retry_target"] = "same"
                     ev = ev2
-                    ev["retried"] = True
 
-    if ev is None:
-        return None, err or "no_resolved_hop"
     return ev, ""
 
 
@@ -300,6 +322,9 @@ def has_foreign_hop(public_hops):
 
 
 def analyse(hops):
+    # TTL 缺失的跳无法参与排序与「尾部 N 跳」判定，先剔除；否则下面的
+    # max() / sorted() 会直接抛 TypeError，整列探测被误报成失败。
+    hops = [h for h in hops if h.get("ttl") is not None]
     resolved = [h for h in hops if h["ok"]]
     if not resolved:
         return None
@@ -345,7 +370,6 @@ def analyse(hops):
         "max_ttl": max_ttl, "unresolved": sorted(un), "longest_run": longest_run,
         "dest_ip": resolved[-1]["ip"], "dest_asn": dest_asn,
         "cn_hops": cn_hops, "evidence": evidence, "tail_cut": tail_cut,
-        "route_path": format_route_path(hops),
         "ev_tags": ev_tags, "cn_tags": cn_tags,
         "public_hops": public_hops,
         "first_public": public_hops[0] if public_hops else None,
@@ -482,7 +506,8 @@ def classify_offline(blocks):
         val, why, note = classify(key, ev)
         out[key] = {"value": val, "confidence": ev["confidence"],
                     "reason": why, "note": note,
-                    "route_path": ev["route_path"],
+                    # 逐跳路径只在离线复算里输出给人看，线上上报与库表都不再需要它。
+                    "route_path": format_route_path(hops),
                     "conf_reason": ev.get("conf_reason", ""),
                     "path_incomplete": ev["path_incomplete"],
                     "longest_unresolved_run": ev["longest_run"]}
@@ -526,7 +551,10 @@ def main():
                 continue
             if ev.get("retried"):
                 retried.append(key)
-                log("%s 证据不足或有档位歧义，已重探并合并证据" % CARRIER_LABEL[key])
+                if ev.get("retry_target") == "fallback":
+                    log("%s 初次未取得可用路径，已改用备选目标 %s" % (CARRIER_LABEL[key], ev["dest_ip"]))
+                else:
+                    log("%s 证据不足或有档位歧义，已对同一目标重探并合并证据" % CARRIER_LABEL[key])
             target_ips[key] = ev["dest_ip"]
             results[key] = (classify(key, ev), ev)
 
@@ -539,7 +567,6 @@ def main():
         "retried": retried,
         "confidence": {},
         "reason": {},
-        "route_paths": {},
     }
     usable = 0
     for key, _ in CARRIERS:
@@ -552,7 +579,6 @@ def main():
         (val, why, note), ev = r
         payload[key] = val if val else "未知"
         payload["confidence"][key] = ev["confidence"]
-        payload["route_paths"][key] = ev["route_path"]
         parts = [why]
         # 无结论时 note 不拼进去：更新器自己会写成「保留旧值（本次无结论：…）」，
         # 再拼一遍「本次不更新该列，保留旧值」就重复了。

@@ -673,19 +673,10 @@
   background: color-mix(in srgb, var(--fill-tertiary) 24%, transparent);
 }
 
-.compact-node-network .return-route-summary-grid {
-  gap: 6px;
-}
-
-.compact-node-network .return-route-summary-item {
-  min-height: 40px;
-  align-items: flex-start;
-  flex-direction: column;
-  justify-content: center;
-  gap: 3px;
-  padding: 6px 8px;
-  border-color: color-mix(in srgb, var(--border-subtle) 85%, transparent);
-  background: color-mix(in srgb, var(--surface-a) 66%, transparent);
+/* 关闭三网延迟时，线路摘要会单独占一张 compact-node-network 卡片、成为唯一子元素，
+   此时那条用于分隔 ping 面板和摘要的上边框就没有分隔对象了。 */
+.compact-node-network > .return-route-summary:only-child {
+  border-top: 0;
 }
 
 .compact-node-network .return-route-summary-badge {
@@ -919,14 +910,6 @@
 
   .compact-node-network .return-route-summary {
     padding: 10px;
-  }
-
-  .compact-node-network .return-route-summary-grid {
-    gap: 5px;
-  }
-
-  .compact-node-network .return-route-summary-item {
-    padding: 5px 6px;
   }
 
   .compact-node-status {

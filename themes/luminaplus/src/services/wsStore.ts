@@ -312,8 +312,8 @@ function shallowEqualNodeInfo(a: NodeInfo, b: NodeInfo) {
     a.report_interval === b.report_interval &&
     a.agent_version === b.agent_version &&
     sameReturnRoute(a.return_route, b.return_route) &&
-    JSON.stringify(a.forward_routes) === JSON.stringify(b.forward_routes) &&
-    JSON.stringify(a.return_routes) === JSON.stringify(b.return_routes)
+    routeFingerprint(a.forward_routes) === routeFingerprint(b.forward_routes) &&
+    routeFingerprint(a.return_routes) === routeFingerprint(b.return_routes)
     // updated_at 是未展示的心跳字段，不应触发整个节点列表重渲染。
   );
 }
@@ -327,6 +327,31 @@ function sameReturnRoute(a: NodeInfo["return_route"], b: NodeInfo["return_route"
     a.unicom === b.unicom &&
     a.mobile === b.mobile
   );
+}
+
+const ROUTE_CARRIERS = ["telecom", "unicom", "mobile"] as const;
+
+/**
+ * 去程/回程路由对象的轻量指纹，只覆盖会被展示的字段。
+ *
+ * 这里只需要判断「展示内容有没有变」，不必逐字节比较：直接 JSON.stringify 整个对象会把
+ * carrier_meta 的每个字段都拼成字符串，单节点能有数 KB，40 台机器每次列表/WS 批次就要
+ * 拼出几百 KB 的临时字符串，纯属浪费。
+ */
+function routeFingerprint(routes: NodeInfo["forward_routes"]): string {
+  if (!routes) return "";
+  const parts: string[] = [];
+  for (const family of ["ipv4", "ipv6"] as const) {
+    const record = routes[family];
+    if (!record) continue;
+    parts.push(family);
+    for (const carrier of ROUTE_CARRIERS) {
+      const meta = record.carrier_meta?.[carrier];
+      parts.push([record[carrier] ?? "", meta?.route_type ?? "", meta?.probed_at ?? "",
+        meta?.status ?? "", meta?.reason ?? "", meta?.confidence ?? ""].join("~"));
+    }
+  }
+  return parts.join("|");
 }
 
 let state: State = emptyState();

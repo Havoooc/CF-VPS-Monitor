@@ -27,6 +27,7 @@ import { supportsFineHover } from "@/utils/mediaQuery";
 import { formatHealthBucketTooltip } from "./pingBucketText";
 import { resolveTouchBucketIndex, TOUCH_BUCKET_HOLD_MS } from "./touchBucketPick";
 import { MultiPingStatus } from "./MultiPingStatus";
+import { RouteSummary } from "./RouteSummary";
 import { TrafficSparkStrip } from "./TrafficSparkStrip";
 import {
   formatCompactPercent,
@@ -737,7 +738,8 @@ export const CompactNodeCard = memo(function CompactNodeCard({
           lines={homepagePingLines}
           density="compact"
           returnRoute={node.return_route}
-              forwardRoutes={node.forward_routes} returnRoutes={node.return_routes}
+          forwardRoutes={node.forward_routes}
+          returnRoutes={node.return_routes}
           hasPublicIPv6={node.ipv6 === "1"}
           className="compact-node-network"
         />
@@ -755,6 +757,18 @@ export const CompactNodeCard = memo(function CompactNodeCard({
             hasRealHomepagePingBinding={hasRealHomepagePingBinding}
             pingLoading={pingLoading}
             pingError={pingError}
+          />
+        </section>
+      )}
+      {/* 站点关闭三网延迟时 homepagePingLines 为空，大卡会退化成线路摘要；
+          紧凑卡此前没有这条回退，同一份数据下什么都不显示。 */}
+      {homepagePingLines.length === 0 && (
+        <section className="compact-node-network" aria-label="三网去程与回程线路">
+          <RouteSummary
+            returnRoute={node.return_route}
+            forwardRoutes={node.forward_routes}
+            returnRoutes={node.return_routes}
+            hasPublicIPv6={node.ipv6 === "1"}
           />
         </section>
       )}

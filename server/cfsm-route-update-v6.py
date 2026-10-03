@@ -40,46 +40,6 @@ def classify(carrier, hops):
     return route_type(carrier, asns)
 
 
-def format_route_path(hops):
-    """Preserve observed ASN hops, per-TTL ECMP alternatives, and nonresponsive gaps."""
-    labels = []
-    for group in hops:
-        if not isinstance(group, list) or not group:
-            labels.append("*")
-            continue
-        observed = []
-        for item in group:
-            if not item.get("Success"):
-                continue
-            geo = item.get("Geo") or {}
-            raw_asn = str(geo.get("asnumber") or "").strip()
-            asn = raw_asn if raw_asn.isdigit() else ""
-            tag = ""
-            if asn == "4809": tag = "CN2"
-            elif asn == "4134": tag = "163"
-            elif asn == "9929": tag = "9929"
-            elif asn == "10099": tag = "10099"
-            elif asn == "4837": tag = "4837"
-            elif asn == "58807": tag = "CMIN2"
-            elif asn == "58453": tag = "CMI"
-            elif asn in {"9808", "56041"}: tag = "CMNET"
-            if asn:
-                observed.append("AS%s%s" % (asn, " (%s)" % tag if tag else ""))
-            else:
-                owner = str(geo.get("isp") or geo.get("owner") or "ASN 未识别").strip()
-                observed.append(owner[:36])
-        labels.append(" / ".join(sorted(set(observed))) if observed else "*")
-
-    compact = []
-    for label in labels:
-        if compact and compact[-1][0] == label:
-            compact[-1][1] += 1
-        else:
-            compact.append([label, 1])
-    path = " → ".join("%s ×%d" % (label, count) if count > 1 else label for label, count in compact)
-    return path[:1200]
-
-
 def probe(carrier, hostname):
     command = [NEXTTRACE, "-6", "--tcp", "-p", "80", "-q", "3", "--psize", "1400", "--max-hops", "30", "-j", hostname]
     try:
@@ -104,7 +64,8 @@ def probe(carrier, hostname):
     if not route:
         log(f"{carrier} no_backbone_evidence")
         return None
-    return {"route": route, "route_type": route, "route_path": format_route_path(data.get("Hops") or []),
+    # 不再生成 route_path：逐跳 ASN 链不在卡片上展示，却占了每次上报里最大的一块体积。
+    return {"route": route, "route_type": route,
             "confidence": "high", "destination_reached": True,
             "reason": "destination reached; ASN evidence", "target": hostname}
 

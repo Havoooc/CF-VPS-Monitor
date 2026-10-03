@@ -7,6 +7,26 @@ spec = importlib.util.spec_from_file_location('forward', Path(__file__).with_nam
 forward = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(forward)
 
+spec_ret = importlib.util.spec_from_file_location('returnroute', Path(__file__).with_name('cfsm-return-route.py'))
+returnroute = importlib.util.module_from_spec(spec_ret)
+spec_ret.loader.exec_module(returnroute)
+
+
+def _trace(entries):
+    """构造一份最小可用的 nexttrace -j 输出；entries 为 [(ttl, ip, country, asn)]。"""
+    hops = []
+    for ttl, ip, country, asn in entries:
+        hops.append([{
+            'TTL': ttl, 'Success': True, 'Address': {'IP': ip},
+            'Geo': {'asnumber': str(asn), 'country': country, 'isp': 'test', 'owner': 'test'},
+        }])
+    return {'Hops': hops}
+
+
+def _hop(ttl, ip, ok=True, country='', asn=None, tag=None):
+    return {'ttl': ttl, 'ip': ip, 'ok': ok, 'country': country, 'asn': asn,
+            'tag': tag, 'isp': '', 'owner': '', 'src': ''}
+
 class RoutePolicyTests(unittest.TestCase):
     def test_node_capability_and_online_checks(self):
         node = {'enabled': True, 'runtime_state': 'online', 'capabilities': {'traceroute': True, 'ipv6': False}}
@@ -28,14 +48,84 @@ class RoutePolicyTests(unittest.TestCase):
         self.assertEqual(record['carrier_meta']['telecom']['probed_at'], '2026-10-01T00:00:00Z')
         self.assertEqual(record['carrier_meta']['unicom']['probed_at'], '2026-10-03T00:00:00Z')
 
-    def test_downgrade_requires_two_observations_and_failure_resets(self):
+    def test_downgrade_requires_two_daily_observations_despite_failure(self):
         record = {'telecom': 'CN2'}
         candidate = {'route': '普通国际', 'confidence': 'high'}
         self.assertFalse(merge_candidate(record, 'telecom', candidate, '2026-10-01T00:00:00Z'))
         self.assertFalse(merge_candidate(record, 'telecom', candidate, '2026-10-01T12:00:00Z'))
+        # 中间一次探测失败不再清空已确认计数，次日同向观察即生效。
         merge_candidate(record, 'telecom', None, '2026-10-02T00:00:00Z')
-        self.assertFalse(merge_candidate(record, 'telecom', candidate, '2026-10-03T00:00:00Z'))
-        self.assertTrue(merge_candidate(record, 'telecom', candidate, '2026-10-04T00:00:00Z'))
+        self.assertTrue(merge_candidate(record, 'telecom', candidate, '2026-10-03T00:00:00Z'))
+        self.assertEqual(record['telecom'], '普通国际')
+
+    def test_failure_keeps_reason_and_pending_counter(self):
+        record = {'telecom': 'CN2'}
+        candidate = {'route': '普通国际', 'confidence': 'high'}
+        merge_candidate(record, 'telecom', candidate, '2026-10-01T00:00:00Z')
+        merge_candidate(record, 'telecom',
+                        {'route': None, 'reason': '中国侧证据不足，最长未响应 5 跳'},
+                        '2026-10-02T00:00:00Z')
+        meta = record['carrier_meta']['telecom']
+        self.assertEqual(meta['status'], 'failed')
+        self.assertEqual(meta['reason'], '中国侧证据不足，最长未响应 5 跳')
+        self.assertEqual(meta['pending_count'], 1)
+
+    def test_route_path_is_dropped_from_records(self):
+        record = {'telecom': 'CN2',
+                  'carrier_meta': {'telecom': {'route_path': 'AS4134 ×3 → AS4809'}}}
+        merge_candidate(record, 'telecom', {'route': 'CN2', 'confidence': 'high'},
+                        '2026-10-03T00:00:00Z')
+        self.assertNotIn('route_path', record['carrier_meta']['telecom'])
+
+    def test_retry_probes_the_same_target_and_merges(self):
+        # 初次低置信（境内无证据 + 中间跳大面积不响应），重探必须打同一个 hostname。
+        calls = []
+        first = [(1, '8.8.8.8', '美国', 12345), (5, '9.9.9.9', '美国', 12346)]
+        second = [(1, '8.8.8.8', '美国', 12345), (3, '7.7.7.7', '日本', 12347),
+                  (5, '9.9.9.9', '美国', 12346)]
+
+        def fake(host):
+            calls.append(host)
+            return True, _trace(second if len(calls) > 1 else first), ''
+
+        original = returnroute.run_probe
+        returnroute.run_probe = fake
+        try:
+            ev, err = returnroute.probe_carrier('telecom', 'zj-ct-v4.ip.zstaticcdn.com', '183.131.7.1')
+        finally:
+            returnroute.run_probe = original
+        self.assertEqual(calls, ['zj-ct-v4.ip.zstaticcdn.com'] * 2)
+        self.assertNotEqual(ev.get('retry_target'), 'fallback')
+        self.assertEqual(err, '')
+        # 两次采样按 TTL 取并集：第二次补齐的 TTL=3 跳应出现在合并结果里。
+        self.assertEqual(ev['max_ttl'], 5)
+        self.assertEqual(sorted(h['ttl'] for h in ev['public_hops']), [1, 3, 5])
+
+    def test_fallback_target_is_used_only_when_first_probe_yields_nothing(self):
+        calls = []
+
+        def fake(host):
+            calls.append(host)
+            if host == '183.131.7.1':
+                return True, _trace([(1, '183.131.7.1', '中国', 4134)]), ''
+            return False, None, 'timeout>55s'
+
+        original = returnroute.run_probe
+        returnroute.run_probe = fake
+        try:
+            ev, err = returnroute.probe_carrier('telecom', 'zj-ct-v4.ip.zstaticcdn.com', '183.131.7.1')
+        finally:
+            returnroute.run_probe = original
+        self.assertEqual(calls, ['zj-ct-v4.ip.zstaticcdn.com', '183.131.7.1'])
+        self.assertEqual(ev['retry_target'], 'fallback')
+        self.assertEqual(ev['dest_ip'], '183.131.7.1')
+        self.assertEqual(err, '')
+
+    def test_analyse_ignores_null_ttl_hops(self):
+        ev = returnroute.analyse([_hop(None, '1.1.1.1', country='美国', asn=1),
+                                  _hop(1, '8.8.8.8', country='美国', asn=2)])
+        self.assertIsNotNone(ev)
+        self.assertEqual(ev['max_ttl'], 1)
 
     def test_forward_failed_or_domestic_only_task_not_accepted(self):
         self.assertIsNone(forward.summarize({'success': False, 'data': {'hops': [{'asn': 'AS4809'}]}}, 'telecom'))

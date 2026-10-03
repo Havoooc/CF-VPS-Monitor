@@ -41,9 +41,13 @@ def main():
             value = data.get(carrier)
             valid = value in {'CN2', '9929', '10099', '4837', 'CMIN2', 'CMI', 'CMNET',
                               '普通国际', '国内电信', '国内联通', '国内移动'}
-            candidate = {'route': value, 'confidence': data.get('confidence', {}).get(carrier, 'low'),
-                         'reason': data.get('reason', {}).get(carrier, ''), 'route_type': value,
-                         'route_path': data.get('route_paths', {}).get(carrier, '')} if valid else None
+            # 无有效值也带上 reason：v3 探针写的中文依据（如「中国侧证据不足，最长
+            # 未响应 5 跳」）是排查线路问题的唯一线索，之前在这里被整体置 None 丢掉，
+            # 库里只剩 'no_valid_evidence' 这种内部标识。
+            candidate = {'route': value if valid else None,
+                         'confidence': data.get('confidence', {}).get(carrier, 'low'),
+                         'reason': data.get('reason', {}).get(carrier, ''),
+                         'route_type': value if valid else None}
             updated += merge_candidate(old, carrier, candidate, stamp)
         old.update(region='浙江', source='服务器每日 IPv4 回程探针', method='nexttrace-json-v3')
         old['last_attempt_at'] = stamp

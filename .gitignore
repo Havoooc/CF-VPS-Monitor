@@ -3,7 +3,8 @@ test/mock-data.sql
 public/cf_probe.log
 public/cf_probe_config.json
 public/cf_probe_traffic.dat
-public/__pycache__/
+__pycache__/
+*.pyc
 /theme/
 public/config.json
 
@@ -41,3 +42,6 @@ Thumbs.db
 .wrangler/
 dist/
 public/themes/luminaplus/
+
+# 探针原始 trace（体积大、按次生成，不入库）
+records/measurements/

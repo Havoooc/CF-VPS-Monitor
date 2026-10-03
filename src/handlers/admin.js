@@ -1148,7 +1148,12 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         return handleServerMutationError(env.DB, e, 'serverUpdateFailed');
       }
       
-      if (forwardRoutes) await saveForwardRoutes(env.DB, id, forwardRoutes);
+      // 去程路由写在服务器字段更新之后：这里再抛错会返回 500，但服务器字段已经改了，
+      // 前端看到失败却重试也不会回滚。去程数据属于附加信息，保存失败只记录日志。
+      if (forwardRoutes) {
+        try { await saveForwardRoutes(env.DB, id, forwardRoutes); }
+        catch (error) { console.warn('[Admin] Forward routes not saved:', error?.message || error); }
+      }
       clearServersListCache();
       scheduleAgentConfigChanged(env, ctx, id);
       

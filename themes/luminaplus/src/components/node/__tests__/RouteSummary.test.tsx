@@ -8,7 +8,7 @@ describe("route comparison", () => {
   it("shows one preferred route label and no expandable route details", async () => {
     const container = document.createElement("div");
     const root = createRoot(container);
-    await act(async () => { root.render(<RouteSummary returnRoute={{ telecom: "CN2 GIA", carrier_meta: { telecom: { route_path: "AS4809 → AS4134" } } }} />); });
+    await act(async () => { root.render(<RouteSummary returnRoute={{ telecom: "CN2 GIA", carrier_meta: { telecom: { route_type: "CN2GIA", reason: "证据段含 AS4809" } } }} />); });
     expect(container.textContent).toContain("CN2GIA");
     expect(container.textContent).toContain("待检测");
     expect(container.textContent).not.toContain("优质");
@@ -32,6 +32,17 @@ describe("route comparison", () => {
     expect(container.textContent).not.toContain("AS58453");
     expect(container.textContent).not.toContain("CN2GIA");
     expect(button.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => root.unmount());
+  });
+  it("renders nothing when neither family has a usable route", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    // 没装探针 / 全新节点：过去会输出一整块 6 行「待检测」空壳。
+    await act(async () => { root.render(<RouteSummary />); });
+    expect(container.textContent).toBe("");
+    // 只有占位值（「未知」）同样不算有数据。
+    await act(async () => { root.render(<RouteSummary returnRoute={{ telecom: "未知" }} />); });
+    expect(container.textContent).toBe("");
     await act(async () => root.unmount());
   });
 });

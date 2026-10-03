@@ -46,14 +46,17 @@ def merge_candidate(record, carrier, candidate, stamp):
     previous = meta.get(carrier, {})
     current = dict(previous)
     current['last_attempt_at'] = stamp
+    # route_path 已从卡片下线：不再落库，并顺手清掉历史记录里的残留（成功/失败路径都要清）。
+    current.pop('route_path', None)
     # Legacy family timestamp is only a fallback for the pre-migration record.
     if not current.get('probed_at') and record.get(carrier) and record.get('probed_at'):
         current['probed_at'] = record['probed_at']
     if not candidate or not candidate.get('route'):
-        current.update(status='failed', reason=(candidate or {}).get('reason', 'no_valid_evidence'))
-        current.pop('pending_value', None)
-        current.pop('pending_count', None)
-        current.pop('pending_day', None)
+        # 无结论时保留 pending_*：探测抖动（目标丢包、geo 采样残缺）很常见，若把
+        # 「已确认一次」的计数清掉，合法的线路变更会被无限拖延——今天确认一次、
+        # 中间失败一次、明天又要从 1 重新数。只更新状态与失败原因。
+        current.update(status='failed',
+                       reason=(candidate or {}).get('reason') or 'no_valid_evidence')
         meta[carrier] = current
         return False
     old = record.get(carrier)
@@ -79,11 +82,6 @@ def merge_candidate(record, carrier, candidate, stamp):
     for field in ('region', 'source'):
         if candidate.get(field):
             current[field] = candidate[field]
-    if 'route_path' in candidate:
-        if candidate['route_path']:
-            current['route_path'] = candidate['route_path']
-        else:
-            current.pop('route_path', None)
     if isinstance(candidate.get('destination_reached'), bool):
         current['destination_reached'] = candidate['destination_reached']
     else:
