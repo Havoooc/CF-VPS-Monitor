@@ -44,3 +44,11 @@ jobs:
           cache-dependency-path: agent/go.sum
       - run: go test ./...
         working-directory: agent
+      - name: Build linux/amd64 probe binary for the image
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=pr" -o dist/cf-probe-linux-amd64 ./cmd/cf-probe
+        working-directory: agent
+      - name: Build probe image without publishing
+        run: docker build --pull --tag cf-probe:pr .
+        working-directory: agent
