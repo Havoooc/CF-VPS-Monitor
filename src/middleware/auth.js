@@ -111,7 +111,7 @@ async function verifyToken(token, env, sys) {
 
   try {
     const payload = await verifyJwt(token, secret);
-    return payload !== null;
+    return payload?.sub === 'admin' && payload.purpose === undefined;
   } catch (e) {
     console.error('Auth check error:', e);
     return false;
@@ -182,12 +182,11 @@ export function readWsTicket(request) {
 /**
  * 一次性消费登记。登记在全局唯一的 MetricsBroadcaster DO 上，重放返回 409。
  *
- * 只有明确的 409 才判定为「用过」。DO 返回其它异常状态或直接抛错时**放行**：票据本身
- * 只剩 60 秒寿命，而「实时推送整体挂掉」比「重放窗口在 60 秒内存在」严重得多。
- * 这条降级路径会留一条日志。
+ * 消费登记不可用时拒绝票据，避免无法保证一次性的凭证被重复使用。
+ * 同源 Cookie / Bearer 登录仍可使用。
  */
 async function consumeWsTicket(env, payload) {
-  if (!env?.METRICS_BROADCASTER) return true;
+  if (!env?.METRICS_BROADCASTER) return false;
   try {
     const id = env.METRICS_BROADCASTER.idFromName('global');
     const stub = env.METRICS_BROADCASTER.get(id);
@@ -198,12 +197,13 @@ async function consumeWsTicket(env, payload) {
     });
     if (response.status === 409) return false;
     if (!response.ok) {
-      console.warn(`[ws-ticket] consume returned ${response.status}, accepting within TTL`);
+      console.warn(`[ws-ticket] consume returned ${response.status}, rejecting ticket`);
+      return false;
     }
     return true;
   } catch (e) {
-    console.warn('[ws-ticket] consume failed, accepting within TTL:', e?.message || e);
-    return true;
+    console.warn('[ws-ticket] consume failed, rejecting ticket:', e?.message || e);
+    return false;
   }
 }
 

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -125,6 +126,9 @@ func readConfig(path string) (Config, error) {
 	cfg.ServerID = values["SERVER_ID"]
 	cfg.Secret = values["SECRET"]
 	cfg.WorkerURL = values["WORKER_URL"]
+	if ip := net.ParseIP(values["PUBLIC_IPV4"]); ip != nil && ip.To4() != nil {
+		cfg.PublicIPv4 = ip.String()
+	}
 	cfg.CollectInterval = parseIntDefault(values["COLLECT_INTERVAL"], cfg.CollectInterval)
 	cfg.ReportInterval = parseIntDefault(values["REPORT_INTERVAL"], cfg.ReportInterval)
 	cfg.CTNode = values["CT_NODE"]
@@ -161,6 +165,7 @@ func writeConfig(path string, cfg Config) error {
 	writeKV("SERVER_ID", cfg.ServerID)
 	writeKV("SECRET", cfg.Secret)
 	writeKV("WORKER_URL", cfg.WorkerURL)
+	writeKV("PUBLIC_IPV4", cfg.PublicIPv4)
 	writeKV("COLLECT_INTERVAL", strconv.Itoa(cfg.CollectInterval))
 	writeKV("REPORT_INTERVAL", strconv.Itoa(cfg.ReportInterval))
 	writeKV("CT_NODE", cfg.CTNode)

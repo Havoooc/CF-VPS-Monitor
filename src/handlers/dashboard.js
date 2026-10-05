@@ -1,7 +1,10 @@
+import { getMeasuredReturnRoutes } from '../utils/measuredReturnRoutes.js';
+import { getForwardRoutes } from '../utils/forwardRoutes.js';
 import { checkAuth, simpleAuthResponse } from '../middleware/auth.js';
 import { getDashboardLatencyHistory, getLatestMetrics, getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, getServerDetail } from '../utils/cache.js';
-import { mergeMetricsIntoServer, coerceNumericMetricFields } from '../utils/metrics.js';
+import { mergeMetricsIntoServer, coerceNumericMetricFields, normalizeReturnRoute } from '../utils/metrics.js';
+import { stripRoutePaths } from '../utils/routeRecord.js';
 import { normalizeLongHistoryPoints } from '../utils/settings.js';
 import { createSuccessResponse, createBadRequestResponse, createNotFoundResponse } from '../utils/errors.js';
 import {
@@ -60,6 +63,8 @@ function withoutPrivateServerFields(server) {
   delete item.bandwidth;
   delete item.note;
   delete item.auto_update;
+  // route_path 已从卡片下线：历史记录里可能仍有残留，出口统一剥掉再下发。
+  if (item.return_route) item.return_route = stripRoutePaths(item.return_route);
   return normalizePublicIpFields(item);
 }
 
@@ -194,11 +199,19 @@ export async function handleServerAPI(request, env, sys) {
   const server = await getServerDetail(env.DB, id, isLoggedIn);
   if (!server) return createNotFoundResponse('Server not found');
   
-  const [latestMetrics, realtimeState] = await Promise.all([
+  const [latestMetrics, realtimeState, forwardRoutes, returnRoutes] = await Promise.all([
     getLatestMetrics(env.DB, id, server),
-    getRealtimeStateForServers(env, [id])
+    url.searchParams.get('include_replay') !== '0' ? getRealtimeStateForServers(env, [id]) : Promise.resolve({ latestReportUpdates: [] }),
+    getForwardRoutes(env.DB), getMeasuredReturnRoutes(env.DB)
   ]);
   mergeMetricsIntoServer(server, latestMetrics);
+  server.forward_routes = forwardRoutes[id];
+  // 浅拷贝：getMeasuredReturnRoutes 返回的是 30s 模块级缓存对象，就地改 .ipv4 会让这份
+  // 派生数据（活值 + 来源标注）留在缓存里，并被随后 routes.js 的 IPv6 写入持久化进快照。
+  const measured = returnRoutes[id];
+  server.return_routes = { ...(measured || { ipv4: {}, ipv6: {} }) };
+  const liveReturnRoute = normalizeReturnRoute(server.return_route);
+  if (liveReturnRoute) server.return_routes.ipv4 = { ...liveReturnRoute, source: '服务器定时回程探针' };
   server.latestReportUpdates = realtimeState.latestReportUpdates;
   server.sysConfig = {
     long_history_points: Number(normalizeLongHistoryPoints(sys.long_history_points))
@@ -215,13 +228,26 @@ export async function handleServersAPI(request, env, sys) {
   }
   markFrontendRealtimeActive();
   
-  const results = (await getAllServers(env.DB, isLoggedIn)).map(withoutPrivateServerFields);
+  const [servers, forwardRoutes, returnRoutes] = await Promise.all([
+    getAllServers(env.DB, isLoggedIn), getForwardRoutes(env.DB), getMeasuredReturnRoutes(env.DB)
+  ]);
+  const results = servers.map(withoutPrivateServerFields);
+  // Legacy clients keep replay by default; themes may explicitly opt out.
+  const includeReplay = new URL(request.url).searchParams.get('include_replay') !== '0';
+  for (const server of results) {
+    server.forward_routes = forwardRoutes[server.id];
+    // 同上：拷贝一层再改，避免污染模块级缓存对象。
+    const measured = returnRoutes[server.id];
+    server.return_routes = { ...(measured || { ipv4: {}, ipv6: {} }) };
+    const liveReturnRoute = normalizeReturnRoute(server.return_route);
+    if (liveReturnRoute) server.return_routes.ipv4 = { ...liveReturnRoute, source: '服务器定时回程探针' };
+  }
   const shouldIncludeLatencyHistory = sys.show_three_net_details === 'true';
   
   const serverIds = results.map(server => server.id).filter(Boolean);
   const [latestMetricsMap, realtimeState, latencyHistory] = await Promise.all([
     getLatestMetricsForAllServers(env.DB),
-    getRealtimeStateForServers(env, serverIds),
+    includeReplay ? getRealtimeStateForServers(env, serverIds) : Promise.resolve({ latestReportUpdates: [] }),
     shouldIncludeLatencyHistory
       ? getDashboardLatencyHistory(env.DB, results)
       : Promise.resolve(new Map())

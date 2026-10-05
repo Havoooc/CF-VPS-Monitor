@@ -179,6 +179,38 @@
   min-width: 0;
 }
 
+/* 大卡的指标图标块:与紧凑卡 gauge 图标同款(彩色圆角方块),颜色由 --metric-item-color 驱动。
+   用修饰类布局,.metric-item 基类保持原样(MiniNodeCard 的 MiniMetricBar 也在用)。 */
+.metric-item-tiled {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 4px 10px;
+  align-items: center;
+}
+
+.metric-item-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--metric-item-color) 16%, var(--border-subtle));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--metric-item-color) 12%, var(--fill-tertiary));
+  color: var(--metric-item-color);
+}
+
+.metric-item-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.metric-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
 .metric-detail {
   display: inline-flex;
   width: fit-content;
@@ -222,20 +254,22 @@
 }
 
 .server-traffic-section {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 22px;
-}
-
-.traffic-stat {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 10px;
   min-width: 0;
 }
 
-.traffic-stat-head,
-.traffic-stat-foot,
+/* 单行式流量行:方向标签 | 速率读数 | 趋势 sparkline | 月累计,四列对齐;
+   上下两行共用同一组固定列宽,读数与趋势线天然对直。 */
+.traffic-stat {
+  display: grid;
+  grid-template-columns: 52px 92px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
 .server-health-head,
 .server-card-meta {
   display: flex;
@@ -259,24 +293,22 @@
 
 .traffic-stat-value {
   flex: 0 0 auto;
-  font-size: 20px;
+  justify-self: end;
+  font-size: 19px;
   font-weight: 700;
   letter-spacing: -0.03em;
+  white-space: nowrap;
 }
 
 .traffic-stat-trend {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   min-width: 0;
 }
 
-.traffic-dot-strip {
+.traffic-spark-strip {
   display: block;
-  flex: 1 1 auto;
   width: 100%;
   min-width: 0;
-  height: 10px;
+  height: 18px;
 }
 
 .traffic-stat-live {
@@ -334,16 +366,27 @@
   letter-spacing: 0.01em;
 }
 
-.traffic-stat-foot {
-  color: var(--text-secondary);
-  font-size: 12px;
+/* 月累计:右端上下两行(标签弱化 + 读数),与左侧速率形成「实时 vs 累计」的对位。 */
+.traffic-stat-total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  min-width: 0;
 }
 
 .traffic-stat-total-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 560;
+  white-space: nowrap;
+}
+
+.traffic-stat-total-value {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* 流量配额:label + 剩余在左、used/limit 在右,单行;下方为 18 个 .traffic-quota-segment
@@ -448,80 +491,39 @@
   letter-spacing: 0.025em;
 }
 
-.return-route-summary-grid {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.return-route-summary-item {
-  display: flex;
-  min-width: 0;
-  min-height: 34px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 5px;
-  padding: 6px 7px;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 78%, transparent);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--fill-tertiary) 52%, transparent);
-}
-
-.return-route-summary-carrier {
-  flex: 0 0 auto;
-  color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 680;
-}
-
 .return-route-summary-badge {
   display: inline-flex;
   min-width: 0;
   align-items: center;
+  justify-content: center;
   gap: 3px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--route-badge-bg, var(--fill-tertiary));
   color: var(--route-badge-fg, var(--text-tertiary));
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 650;
   white-space: nowrap;
 }
 
-.return-route-summary-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .return-route-summary-badge.is-excellent {
   --route-badge-fg: var(--status-online);
+  --route-badge-bg: color-mix(in srgb, var(--status-online) 10%, transparent);
 }
 
 .return-route-summary-badge.is-good {
   --route-badge-fg: var(--status-info);
+  --route-badge-bg: color-mix(in srgb, var(--status-info) 10%, transparent);
 }
 
 .return-route-summary-badge.is-standard {
   --route-badge-fg: var(--status-warning);
+  --route-badge-bg: color-mix(in srgb, var(--status-warning) 12%, transparent);
 }
 
-.return-route-summary-badge.is-stale {
-  opacity: 0.78;
-  text-decoration: underline dashed;
-  text-underline-offset: 2px;
-}
-
-@media (max-width: 360px) {
-  .return-route-summary-grid {
-    gap: 4px;
-  }
-
-  .return-route-summary-item {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 2px;
-    padding: 5px 6px;
-  }
+.return-route-summary-badge.is-pending {
+  --route-badge-fg: var(--text-tertiary);
+  --route-badge-bg: var(--fill-tertiary);
 }
 
 .multi-ping-columns {
@@ -579,61 +581,6 @@
 .multi-ping-name-group .multi-ping-name-trigger {
   flex: 1 1 auto;
   max-width: none;
-}
-
-.multi-ping-route-badge {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-  align-items: center;
-  flex: 0 1 auto;
-  gap: 3px;
-  padding: 2px 5px;
-  overflow: hidden;
-  border: 1px solid var(--route-badge-border, var(--border-subtle));
-  border-radius: 999px;
-  background: var(--route-badge-bg, var(--fill-tertiary));
-  color: var(--route-badge-fg, var(--text-tertiary));
-  font-size: 9px;
-  font-weight: 650;
-  line-height: 1.15;
-  white-space: nowrap;
-}
-
-.multi-ping-route-badge > span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.multi-ping-route-badge.is-excellent {
-  --route-badge-bg: color-mix(in srgb, var(--status-online) 12%, transparent);
-  --route-badge-border: color-mix(in srgb, var(--status-online) 35%, var(--border-subtle));
-  --route-badge-fg: var(--status-online);
-}
-
-.multi-ping-route-badge.is-good {
-  --route-badge-bg: color-mix(in srgb, var(--status-info) 12%, transparent);
-  --route-badge-border: color-mix(in srgb, var(--status-info) 35%, var(--border-subtle));
-  --route-badge-fg: var(--status-info);
-}
-
-.multi-ping-route-badge.is-standard {
-  --route-badge-bg: color-mix(in srgb, var(--status-warning) 12%, transparent);
-  --route-badge-border: color-mix(in srgb, var(--status-warning) 35%, var(--border-subtle));
-  --route-badge-fg: var(--status-warning);
-}
-
-.multi-ping-route-badge.is-stale {
-  border-style: dashed;
-  opacity: 0.85;
-}
-
-.multi-ping-route-separator {
-  opacity: 0.65;
-}
-
-.multi-ping-route-quality {
-  flex: 0 0 auto;
 }
 
 /* 线路名本身就是切换按钮（点开换这一行显示的线路，见 PingLineSwitcher）。外观和原来那行小字一样，
@@ -759,11 +706,6 @@
 .compact-ping-name-group .multi-ping-name-trigger {
   flex: 0 1 auto;
   max-width: 82px;
-}
-
-.compact-ping-name-group .multi-ping-route-badge {
-  flex: 0 1 auto;
-  max-width: min(180px, 54vw);
 }
 
 .compact-ping-current-value {
@@ -924,7 +866,6 @@
     font-size: 15px;
   }
 
-  .server-traffic-section,
   .server-health-grid,
   .server-card-meta-grid {
     grid-template-columns: 1fr;
@@ -933,12 +874,9 @@
 }
 
 
-/* Network summary: one shared live label, two aligned direction columns. */
-.server-traffic-section {
-  gap: 10px 20px;
-}
+/* Network summary: one shared live label, then one row per direction
+   (label | rate | sparkline | monthly total). */
 .traffic-section-heading {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -946,36 +884,23 @@
   font-size: 11px;
   font-weight: 600;
 }
-.traffic-stat {
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--hairline);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-elev) 42%, transparent);
-}
-.traffic-stat-head {
-  flex-wrap: wrap;
-  gap: 6px;
-}
 .traffic-stat-value {
-  margin-left: auto;
-  font-size: clamp(18px, 2vw, 22px);
+  font-size: clamp(17px, 2vw, 20px);
   line-height: 1.2;
-  white-space: nowrap;
-}
-.traffic-stat-trend {
-  opacity: 0.75;
-}
-.traffic-stat-foot {
-  gap: 6px;
-  font-size: 11px;
-}
-.traffic-stat-foot > .tabular {
-  color: var(--text-primary);
-  font-weight: 600;
-  white-space: nowrap;
 }
 @media (max-width: 420px) {
-  .server-traffic-section { column-gap: 10px; }
-  .traffic-stat { padding: 10px 8px; }
+  .traffic-stat { grid-template-columns: 46px 78px minmax(0, 1fr) auto; gap: 8px; }
 }
+
+.route-summary-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.route-family-switch { display:flex; gap:2px; padding:2px; border:1px solid var(--hairline); border-radius:8px; }
+.route-family-switch button { padding:3px 8px; border-radius:5px; color:var(--text-tertiary); font-size:10px; }
+.route-family-switch button[aria-pressed="true"] { background:var(--surface-elev); color:var(--text-primary); }
+/* 三网线路：每运营商一行「去程徽章 ⇄ 回程徽章」。左右徽章各占半宽，去回档位不同时
+   能各自着色对比；待检测给占位徽章，保证两列始终对称。 */
+.route-rows { display: flex; flex-direction: column; gap: 4px; }
+.route-row { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.route-row-carrier { flex: 0 0 34px; color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+.route-row-sep { flex: 0 0 auto; color: var(--text-tertiary); font-size: 11px; }
+.route-row .return-route-summary-badge { flex: 1 1 0; }
+.route-not-applicable { display:block; padding:10px 4px; color:var(--text-tertiary); text-align:center; font-size:11px; }

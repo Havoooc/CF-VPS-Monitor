@@ -4,7 +4,6 @@ import { BackgroundLayer } from "./BackgroundLayer";
 import { TurnstileGate } from "./TurnstileGate";
 import { SiteFooter } from "./SiteFooter";
 import { RealtimeSessionPrompt } from "./RealtimeSessionPrompt";
-import { Spinner } from "@/components/ui/Spinner";
 import { useAppearance } from "@/hooks/useAppearance";
 import { useAuth } from "@/hooks/useAuth";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
@@ -51,8 +50,17 @@ export function AppShell() {
       <main className="app-main flex-1 px-3 pb-8 sm:px-5 md:px-6 lg:px-8">
         <div className="mx-auto w-full max-w-[1720px]">
           {isCheckingShell ? (
-            <div className="flex min-h-[60vh] items-center justify-center">
-              <Spinner size={24} />
+            <div role="status" aria-label="正在加载监控数据" className="grid gap-4 pt-4 sm:grid-cols-2 xl:grid-cols-3">
+              {[0, 1, 2].map(index => (
+                <div key={index} aria-hidden="true" className="server-card animate-pulse motion-reduce:animate-none" style={{ minHeight: 370 }}>
+                  <div className="h-5 w-2/3 rounded bg-[var(--surface-elev)]" />
+                  <div className="mt-5 h-4 w-1/3 rounded bg-[var(--surface-elev)]" />
+                  <div className="mt-8 grid grid-cols-2 gap-5">
+                    {[0, 1, 2, 3].map(metric => <div key={metric} className="h-16 rounded bg-[var(--surface-elev)]" />)}
+                  </div>
+                  <div className="mt-6 h-16 rounded bg-[var(--surface-elev)]" />
+                </div>
+              ))}
             </div>
           ) : accessError ? (
             <AccessError onRetry={() => void publicConfig.refetch()} />

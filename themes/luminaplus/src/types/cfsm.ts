@@ -34,6 +34,13 @@ const nullableNumber = z
  */
 export const ReturnRouteSchema = z
   .object({
+    carrier_meta: z.record(z.string(), z.object({
+      probed_at: z.string().optional(), last_attempt_at: z.string().optional(),
+      status: z.string().optional(), route_type: z.string().optional(),
+      quality: z.string().optional(), confidence: z.string().optional(), reason: z.string().optional(),
+      region: z.string().optional(), source: z.string().optional(),
+      destination_reached: z.boolean().optional(),
+    })).optional(),
     region: z.string().optional(),
     telecom: z.string().optional(),
     unicom: z.string().optional(),
@@ -42,6 +49,7 @@ export const ReturnRouteSchema = z
   .passthrough();
 
 export type ReturnRoute = z.output<typeof ReturnRouteSchema>;
+export type ForwardRoutes = { ipv4?: ReturnRoute; ipv6?: ReturnRoute };
 /** 磁盘 IO；旧探针或全零时后端不会下发该对象。 */
 export const DiskIoSchema = z
   .object({
@@ -165,6 +173,8 @@ export const CfsmServerSchema = z
     boot_time: looseString.default(""),
     agent_version: looseString.default(""),
     return_route: ReturnRouteSchema.nullish(),
+    return_routes: z.object({ ipv4: ReturnRouteSchema.optional(), ipv6: ReturnRouteSchema.optional() }).nullish(),
+    forward_routes: z.object({ ipv4: ReturnRouteSchema.optional(), ipv6: ReturnRouteSchema.optional() }).nullish(),
     last_updated: looseNumber.default(0),
     timestamp: looseNumber.default(0),
     is_online: z.boolean().optional(),
@@ -386,6 +396,8 @@ export interface NodeInfo {
   agent_version: string;
   /** 节点到浙江电信/联通/移动探测点的回程线路类型。 */
   return_route?: ReturnRoute;
+  forward_routes?: ForwardRoutes;
+  return_routes?: ForwardRoutes;
   /** CF-Server-Monitor 只下发可达性，不下发具体地址。 */
   ipv4: string;
   ipv6: string;

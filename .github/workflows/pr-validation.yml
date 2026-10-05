@@ -1,0 +1,46 @@
+name: PR validation
+
+on:
+  push:
+    branches: ['codex/**']
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  worker:
+    name: Worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            themes/luminaplus/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix themes/luminaplus
+      - run: python3 server/test_route_policy.py
+      - run: npm run check
+      - run: npm run build:frontend
+
+  probe:
+    name: Probe
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - run: go test ./...
+        working-directory: agent

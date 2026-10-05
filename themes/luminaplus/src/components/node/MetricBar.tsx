@@ -1,4 +1,4 @@
-import { useCallback, type ReactNode } from "react";
+import { useCallback, type CSSProperties, type ReactNode } from "react";
 import { CanvasStrip, fillRoundedRect, safeCanvasColor } from "./CanvasStrip";
 
 const METRIC_SEGMENT_COUNT = 18;
@@ -60,34 +60,42 @@ export function MetricBar({
     [activeSegments, paint],
   );
 
+  // 图标块与紧凑卡 gauge 同款(彩色圆角方块),颜色由 paint 经 --metric-item-color 驱动;
+  // 用 metric-item-tiled 修饰类布局,不影响共享 .metric-item 基类的 MiniNodeCard。
+  const iconStyle = { "--metric-item-color": paint } as CSSProperties;
+
   return (
-    <div className="metric-item">
-      <div className="flex justify-between items-center gap-3 min-w-0">
-        <div className="flex items-center gap-1.5 text-[var(--text-secondary)] flex-shrink-0">
-          <span>{icon}</span>
-          <span className="text-[11px] font-medium tracking-[0.02em]">{label}</span>
+    <div className="metric-item metric-item-tiled">
+      <span className="metric-item-icon" style={iconStyle} aria-hidden>
+        {icon}
+      </span>
+      <div className="metric-item-body">
+        <div className="flex justify-between items-center gap-3 min-w-0">
+          <span className="text-[11px] font-medium tracking-[0.02em] text-[var(--text-secondary)] flex-shrink-0">
+            {label}
+          </span>
+          <div className="tabular text-[13px] text-[var(--text-primary)] whitespace-nowrap overflow-hidden text-ellipsis max-w-full text-right">
+            <span className="font-semibold">{valueText}</span>
+            {unit && (
+              <span className="ml-[1px] text-[11px] text-[var(--text-tertiary)]">{unit}</span>
+            )}
+          </div>
         </div>
-        <div className="tabular text-[13px] text-[var(--text-primary)] whitespace-nowrap overflow-hidden text-ellipsis max-w-full text-right">
-          <span className="font-semibold">{valueText}</span>
-          {unit && (
-            <span className="ml-[1px] text-[11px] text-[var(--text-tertiary)]">{unit}</span>
-          )}
+        <div
+          className="metric-detail"
+          title={detailText}
+          data-empty={detailText ? "false" : "true"}
+        >
+          {detailText ?? " "}
         </div>
-      </div>
-      <div
-        className="metric-detail"
-        title={detailText}
-        data-empty={detailText ? "false" : "true"}
-      >
-        {detailText ?? "\u00A0"}
-      </div>
-      <div className="metric-track">
-        <CanvasStrip
-          className="metric-track-canvas"
-          height={8}
-          redrawKey={redrawKey}
-          draw={draw}
-        />
+        <div className="metric-track">
+          <CanvasStrip
+            className="metric-track-canvas"
+            height={8}
+            redrawKey={redrawKey}
+            draw={draw}
+          />
+        </div>
       </div>
     </div>
   );

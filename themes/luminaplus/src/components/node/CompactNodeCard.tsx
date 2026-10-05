@@ -3,7 +3,6 @@ import type { CSSProperties, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowDown,
-  ArrowDownUp,
   ArrowUp,
   Clock3,
   Cpu,
@@ -20,12 +19,16 @@ import { OsLogo } from "@/components/ui/OsLogo";
 import { useNodeCardModel } from "@/hooks/useNodeCardModel";
 import { HOMEPAGE_PING_BUCKET_COUNT } from "@/hooks/usePingOverview";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useMetricColorsVersion } from "@/hooks/useMetricColors";
 import { formatBytes } from "@/utils/format";
-import { speedRateColor, speedRateColorFromBytes } from "@/utils/metricTone";
+import { speedRateColor } from "@/utils/metricTone";
 import { supportsFineHover } from "@/utils/mediaQuery";
 import { formatHealthBucketTooltip } from "./pingBucketText";
 import { resolveTouchBucketIndex, TOUCH_BUCKET_HOLD_MS } from "./touchBucketPick";
 import { MultiPingStatus } from "./MultiPingStatus";
+import { RouteSummary } from "./RouteSummary";
+import { TrafficSparkStrip } from "./TrafficSparkStrip";
 import {
   formatCompactPercent,
   formatCompactUptime,
@@ -45,8 +48,6 @@ import type {
 } from "@/types/cfsm";
 import type { ByteRateDisplay } from "@/utils/format";
 import type { TrafficDisplay } from "@/utils/traffic";
-
-const TRAFFIC_DOT_COUNT = 16;
 
 type CompactNode = NodeInfo & NodeMetrics;
 type CompactTag = { label: string; color: string };
@@ -123,49 +124,6 @@ function CompactInfoTile({
       </span>
       <span className="compact-node-info-content">{children}</span>
     </div>
-  );
-}
-
-function CompactTrafficPulse({
-  up,
-  down,
-}: {
-  up: TrafficTrendSample[];
-  down: TrafficTrendSample[];
-}) {
-  const upSelected = up.slice(-TRAFFIC_DOT_COUNT);
-  const downSelected = down.slice(-TRAFFIC_DOT_COUNT);
-  const upPadding = Math.max(0, TRAFFIC_DOT_COUNT - upSelected.length);
-  const downPadding = Math.max(0, TRAFFIC_DOT_COUNT - downSelected.length);
-
-  return (
-    <span className="compact-node-traffic-pulse" aria-hidden>
-      {Array.from({ length: TRAFFIC_DOT_COUNT }, (_, index) => {
-        const upSample = index < upPadding ? null : upSelected[index - upPadding];
-        const downSample = index < downPadding ? null : downSelected[index - downPadding];
-        const upValue = upSample?.value ?? 0;
-        const downValue = downSample?.value ?? 0;
-        const active = upValue > 0 || downValue > 0;
-        const level = Math.max(upSample?.level ?? 0, downSample?.level ?? 0);
-        // 每点按其主方向(上/下取大)速率的单位档上色,与大卡的速度档色一致;大小/透明度仍按 level。
-        // 仅活跃点计算颜色,空闲点直接用中性色,省掉无谓的 formatByteRate。
-        const style = {
-          "--compact-traffic-dot-color": active
-            ? speedRateColorFromBytes(Math.max(upValue, downValue))
-            : "var(--progress-bg)",
-          "--compact-traffic-dot-scale": active ? `${0.68 + level * 0.62}` : "0.48",
-          opacity: active ? 0.5 + level * 0.42 : 0.38,
-        } as CSSProperties;
-
-        return (
-          <span
-            key={index}
-            data-active={active ? "true" : "false"}
-            style={style}
-          />
-        );
-      })}
-    </span>
   );
 }
 
@@ -476,85 +434,121 @@ function CompactNodeVitals({
   );
 }
 
-function CompactNodeInfoStrip({
+// 实时速率区:与大卡流量区完全同一语言——每方向一行:
+// 图标+速率(热力色) | 方向色 sparkline | 月度/累计总量(可在设置里关掉)。
+function CompactTrafficLive({
   node,
   trafficTrend,
   upRate,
   downRate,
+  redrawKey,
   showTrafficTotal,
-  showConnections,
 }: {
   node: CompactNode;
   trafficTrend: { up: TrafficTrendSample[]; down: TrafficTrendSample[] };
   upRate: ByteRateDisplay;
   downRate: ByteRateDisplay;
+  redrawKey: string;
   showTrafficTotal: boolean;
+}) {
+  const upMonthly = node.trafficUpMonthly !== undefined && node.trafficUpMonthly !== null;
+  const downMonthly = node.trafficDownMonthly !== undefined && node.trafficDownMonthly !== null;
+  return (
+    <section className="compact-node-traffic-live" aria-label="实时速率">
+      <CompactRateRow
+        icon={<ArrowUp size={12} strokeWidth={2.3} />}
+        rate={upRate}
+        samples={trafficTrend.up}
+        sparkColor="var(--traffic-up)"
+        totalLabel={`${upMonthly ? "本月" : "累计"}出站`}
+        total={formatBytes(upMonthly ? node.trafficUpMonthly! : node.trafficUp)}
+        showTotal={showTrafficTotal}
+        redrawKey={redrawKey}
+      />
+      <CompactRateRow
+        icon={<ArrowDown size={12} strokeWidth={2.3} />}
+        rate={downRate}
+        samples={trafficTrend.down}
+        sparkColor="var(--traffic-down)"
+        totalLabel={`${downMonthly ? "本月" : "累计"}入站`}
+        total={formatBytes(downMonthly ? node.trafficDownMonthly! : node.trafficDown)}
+        showTotal={showTrafficTotal}
+        redrawKey={redrawKey}
+      />
+    </section>
+  );
+}
+
+function CompactRateRow({
+  icon,
+  rate,
+  samples,
+  sparkColor,
+  totalLabel,
+  total,
+  showTotal,
+  redrawKey,
+}: {
+  icon: ReactNode;
+  rate: ByteRateDisplay;
+  samples: TrafficTrendSample[];
+  sparkColor: string;
+  totalLabel: string;
+  total: string;
+  showTotal: boolean;
+  redrawKey: string;
+}) {
+  // 速率数字沿用速度档热力色,线条用方向色 —— 与大卡同一套色相语义。
+  const heat = speedRateColor(rate.unit);
+  return (
+    <div className="compact-node-rate-row">
+      <span className="compact-node-rate-head" style={{ color: heat }}>
+        {icon}
+        <strong className="tabular">
+          {rate.value}
+          <small>{rate.unit}</small>
+        </strong>
+      </span>
+      <TrafficSparkStrip
+        samples={samples}
+        color={sparkColor}
+        redrawKey={redrawKey}
+        height={12}
+        className="compact-node-traffic-spark"
+      />
+      {showTotal && (
+        <span className="compact-node-rate-total">
+          <small>{totalLabel}</small>
+          <strong className="tabular">{total}</strong>
+        </span>
+      )}
+    </div>
+  );
+}
+
+function CompactNodeInfoStrip({
+  node,
+  showConnections,
+}: {
+  node: CompactNode;
   showConnections: boolean;
 }) {
+  if (!showConnections) return null;
   return (
     <div className="compact-node-info-strip">
-      <CompactInfoTile
-        label="实时速率"
-        icon={<ArrowDownUp size={13} strokeWidth={2.2} />}
-        color="var(--progress-cpu)"
-      >
+      <CompactInfoTile label="连接数" icon={<Network size={13} strokeWidth={2.1} />} color="var(--progress-network)">
         <CompactInfoRow
-          icon={<ArrowUp size={12} strokeWidth={2.3} />}
-          value={upRate.value}
-          unit={upRate.unit}
-          color={speedRateColor(upRate.unit)}
+          icon={<Network size={12} strokeWidth={2.1} />}
+          label="TCP"
+          value={node.connectionsTcp.toLocaleString()}
+          color="var(--progress-network)"
         />
         <CompactInfoRow
-          icon={<ArrowDown size={12} strokeWidth={2.3} />}
-          value={downRate.value}
-          unit={downRate.unit}
-          color={speedRateColor(downRate.unit)}
+          icon={<Network size={12} strokeWidth={2.1} />}
+          label="UDP"
+          value={node.connectionsUdp.toLocaleString()}
         />
-        <CompactTrafficPulse up={trafficTrend.up} down={trafficTrend.down} />
       </CompactInfoTile>
-      {showTrafficTotal && (
-        <CompactInfoTile
-          label="月度流量"
-          icon={<Database size={13} strokeWidth={2.1} />}
-          color="var(--text-primary)"
-        >
-          <CompactInfoRow
-            icon={(
-              <ArrowUp
-                size={12}
-                strokeWidth={2.5}
-                aria-label="上行"
-              />
-            )}
-            value={formatBytes((node.trafficUpMonthly !== undefined && node.trafficUpMonthly !== null) ? node.trafficUpMonthly : node.trafficUp)}
-          />
-          <CompactInfoRow
-            icon={(
-              <ArrowDown
-                size={12}
-                strokeWidth={2.5}
-                aria-label="下行"
-              />
-            )}
-            value={formatBytes((node.trafficDownMonthly !== undefined && node.trafficDownMonthly !== null) ? node.trafficDownMonthly : node.trafficDown)}
-          />
-        </CompactInfoTile>
-      )}
-      {showConnections && (
-        <CompactInfoTile label="连接数" icon={<Network size={13} strokeWidth={2.1} />} color="var(--progress-network)">
-          <CompactInfoRow
-            icon={<Network size={12} strokeWidth={2.1} />}
-            label="TCP"
-            value={node.connectionsTcp.toLocaleString()}
-            color="var(--progress-network)"
-          />
-          <CompactInfoRow
-            icon={<Network size={12} strokeWidth={2.1} />}
-            label="UDP"
-            value={node.connectionsUdp.toLocaleString()}
-          />
-        </CompactInfoTile>
-      )}
     </div>
   );
 }
@@ -681,6 +675,10 @@ export const CompactNodeCard = memo(function CompactNodeCard({
     includeMultiPing: true,
   });
   const themeSettings = useThemeSettings();
+  const { resolvedAppearance } = usePreferences();
+  // 与大卡同一规则:外观或自定义配色变化时 canvas sparkline 立即按新颜色重画。
+  const colorsVersion = useMetricColorsVersion();
+  const redrawKey = `${resolvedAppearance}:${colorsVersion}`;
 
   if (!model.node) {
     return <div className="compact-node-card animate-pulse" aria-busy />;
@@ -721,12 +719,16 @@ export const CompactNodeCard = memo(function CompactNodeCard({
       />
       <CompactNodeChips subtitle={subtitle} tags={footerTags} ipv4={node.ipv4} ipv6={node.ipv6} />
       <CompactNodeVitals node={node} loadFraction={loadFraction} />
-      <CompactNodeInfoStrip
+      <CompactTrafficLive
         node={node}
         trafficTrend={trafficTrend}
         upRate={upRate}
         downRate={downRate}
+        redrawKey={redrawKey}
         showTrafficTotal={showTrafficTotal}
+      />
+      <CompactNodeInfoStrip
+        node={node}
         showConnections={showConnections}
       />
       <CompactTrafficBar traffic={traffic} uptimeLabel={uptimeLabel} />
@@ -736,6 +738,9 @@ export const CompactNodeCard = memo(function CompactNodeCard({
           lines={homepagePingLines}
           density="compact"
           returnRoute={node.return_route}
+          forwardRoutes={node.forward_routes}
+          returnRoutes={node.return_routes}
+          hasPublicIPv6={node.ipv6 === "1"}
           className="compact-node-network"
         />
       ) : (
@@ -752,6 +757,18 @@ export const CompactNodeCard = memo(function CompactNodeCard({
             hasRealHomepagePingBinding={hasRealHomepagePingBinding}
             pingLoading={pingLoading}
             pingError={pingError}
+          />
+        </section>
+      )}
+      {/* 站点关闭三网延迟时 homepagePingLines 为空，大卡会退化成线路摘要；
+          紧凑卡此前没有这条回退，同一份数据下什么都不显示。 */}
+      {homepagePingLines.length === 0 && (
+        <section className="compact-node-network" aria-label="三网去程与回程线路">
+          <RouteSummary
+            returnRoute={node.return_route}
+            forwardRoutes={node.forward_routes}
+            returnRoutes={node.return_routes}
+            hasPublicIPv6={node.ipv6 === "1"}
           />
         </section>
       )}

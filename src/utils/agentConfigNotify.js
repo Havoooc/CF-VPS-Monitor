@@ -48,3 +48,14 @@ export function scheduleAgentReportModeChanged(env, ctx) {
 
   return promise;
 }
+
+// Access changes are awaited by admin mutations, not deferred in waitUntil.
+export async function notifyFrontendAccessChanged(env) {
+  if (!env?.METRICS_BROADCASTER) return;
+  const stub = env.METRICS_BROADCASTER.get(env.METRICS_BROADCASTER.idFromName('global'));
+  const response = await stub.fetch('http://internal/agent-config-changed', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ frontendAccessChanged: true })
+  });
+  if (!response.ok) throw new Error('Frontend permissions refresh failed');
+}

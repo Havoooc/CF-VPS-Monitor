@@ -40,6 +40,7 @@ type Agent struct {
 	monthlyRX  uint64
 	monthlyTX  uint64
 	clock      calibratedClock
+	routes     routeReportCache
 
 	samples                  []metricSample
 	lastSample               time.Time
@@ -725,6 +726,9 @@ func (a *Agent) samplesForReport() []map[string]any {
 
 func (a *Agent) metricsForReport(m Metrics, reportAt time.Time) map[string]any {
 	metrics := metricsToMap(m)
+	for field, value := range a.routes.fields(reportAt) {
+		metrics[field] = value
+	}
 	bootTime, err := strconv.ParseInt(m.BootTime, 10, 64)
 	if err == nil && bootTime > 0 {
 		metrics["boot_time"] = strconv.FormatInt(a.clock.correctLocalTimestamp(bootTime, reportAt), 10)
@@ -792,7 +796,10 @@ func (a *Agent) networkWorker(ctx context.Context) {
 			needUpdate := false
 			if lastIP.IsZero() || now.Sub(lastIP) >= 10*time.Minute {
 				usePublicDNS := usePublicDNSResolver(cfg)
-				snap.IPv4 = lookupPublicIP("tcp4", a.log, usePublicDNS)
+				snap.IPv4 = cfg.PublicIPv4
+				if snap.IPv4 == "" {
+					snap.IPv4 = lookupPublicIP("tcp4", a.log, usePublicDNS)
+				}
 				snap.IPv6 = lookupPublicIP("tcp6", a.log, usePublicDNS)
 				lastIP = now
 				needUpdate = true

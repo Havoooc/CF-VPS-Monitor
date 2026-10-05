@@ -35,6 +35,24 @@
         <textarea name="edit_note" autocomplete="off" v-model="editForm.note" class="form-textarea" rows="2" :placeholder="trans.notePlaceholder"></textarea>
       </div>
 
+      <fieldset v-if="editForm.forward_routes" class="form-group">
+        <legend class="form-label">去程线路 · 手动记录</legend>
+        <p class="form-hint">填写国内测量点到本服务器的结果，留空表示待检测。地点、来源和时间会公开展示。</p>
+        <div v-for="family in ['ipv4', 'ipv6']" :key="family">
+          <strong>{{ family.toUpperCase() }}</strong>
+          <div class="form-row">
+            <div v-for="carrier in [{key:'telecom',label:'电信'},{key:'unicom',label:'联通'},{key:'mobile',label:'移动'}]" :key="carrier.key" class="form-group flex-1">
+              <label class="form-label">{{ carrier.label }}</label>
+              <input v-model="editForm.forward_routes[family][carrier.key]" maxlength="160" class="form-input" placeholder="例如 CN2 GIA / 未识别">
+            </div>
+          </div>
+          <div class="form-row">
+            <input v-model="editForm.forward_routes[family].region" maxlength="160" class="form-input" placeholder="测量地点，例如上海">
+            <input v-model="editForm.forward_routes[family].source" maxlength="160" class="form-input" placeholder="测量来源，例如自有探针">
+            <input v-model="editForm.forward_routes[family].probed_at" type="datetime-local" class="form-input" aria-label="测量时间">
+          </div>
+        </div>
+      </fieldset>
       <div class="form-row mobile-two-row">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.currency }}</label>

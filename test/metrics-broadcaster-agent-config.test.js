@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MetricsBroadcaster } from '../src/durable/MetricsBroadcaster.js';
 import { flushBroadcastBatch, getHistoryMetrics, handleUpdateWebSocketUpgrade, handleWebSocketUpgrade, queueBroadcastSamples } from '../src/handlers/update.js';
-import { buildAuthCookie, createWsTicket, generateToken, verifyWsTicket } from '../src/middleware/auth.js';
+import { buildAuthCookie, checkAuth, checkWebSocketAuth, createWsTicket, generateToken, verifyWsTicket } from '../src/middleware/auth.js';
 import { buildResourceAlertNotificationPayloads } from '../src/services/notification.js';
 import { clearSiteSettingsCache, DEFAULT_NOTIFICATION_TEMPLATE, normalizeNotificationTemplate, normalizeResourceAlertRules } from '../src/utils/settings.js';
 
@@ -925,8 +925,8 @@ test('Agent WSS batches all-scope subscribers while single-server subscribers st
     }
   });
   const broadcaster = makeBroadcaster([
-    makeFrontendSocket({ scope: 'all', serverIds: ['server-1', 'server-2'] }, allMessages),
-    makeFrontendSocket({ scope: 'server-1', serverIds: [] }, singleMessages)
+    makeFrontendSocket({ isAdmin: true, scope: 'all', serverIds: ['server-1', 'server-2'] }, allMessages),
+    makeFrontendSocket({ isAdmin: true, scope: 'server-1', serverIds: [] }, singleMessages)
   ]);
 
   await broadcaster._ingestRealtimeUpdates([{
@@ -1404,4 +1404,74 @@ test('WSS history persistence keeps samples received during a D1 flush for the n
   } finally {
     Date.now = originalNow;
   }
+});
+
+
+test('WS ticket cannot be used as an admin Bearer or Cookie', async () => {
+  const env = { API_SECRET: 'synthetic-test-secret-000000000000' };
+  const sys = {};
+  const { ticket } = await createWsTicket(env, sys);
+  for (const headers of [ { Authorization: `Bearer ${ticket}` }, { Cookie: `cfsm_auth=${ticket}` } ]) {
+    assert.equal(await checkAuth(new Request('https://test.invalid/api/admin', { headers }), env, sys), false);
+  }
+  const token = await generateToken(env, sys);
+  assert.equal(await checkAuth(new Request('https://test.invalid/api/admin', {
+    headers: { Authorization: `Bearer ${token}` }
+  }), env, sys), true);
+});
+
+test('one-time WS ticket is rejected when its consume registry is unavailable', async () => {
+  const env = { API_SECRET: 'synthetic-test-secret-000000000000', METRICS_BROADCASTER: {
+    idFromName: () => 'global', get: () => ({ fetch: async () => new Response('', { status: 503 }) })
+  } };
+  const { ticket } = await createWsTicket(env, {});
+  assert.equal(await checkWebSocketAuth(new Request(`https://test.invalid/api/ws?ticket=${ticket}`), env, {}), false);
+});
+
+test('public WS broadcasts only authorized visible nodes, including single-node scopes', () => {
+  const messages = [];
+  let attachment = { isAdmin: false, scope: 'all', serverIds: ['visible', 'hidden'], allowedServerIds: ['visible'] };
+  const socket = { deserializeAttachment: () => attachment, send: value => messages.push(JSON.parse(value)) };
+  const broadcaster = makeBroadcaster([socket]);
+  const updates = ['visible', 'hidden'].map(serverId => ({ serverId, samples: [{ ts: 1, data: { cpu: 1 } }] }));
+  broadcaster._broadcastBatch(updates);
+  assert.deepEqual(messages[0].updates.map(update => update.serverId), ['visible']);
+  attachment = { ...attachment, scope: 'hidden' };
+  broadcaster._broadcastBatch(updates);
+  assert.equal(messages.length, 1);
+  attachment = { ...attachment, isAdmin: true };
+  broadcaster._broadcastBatch(updates);
+  assert.equal(messages[1].updates[0].serverId, 'hidden');
+});
+
+test('public WS cannot expand its allowed node set by resubscribing', async () => {
+  let attachment = { isAdmin: false, scope: 'all', serverIds: ['visible'], allowedServerIds: ['visible'] };
+  const closes = [];
+  const socket = {
+    deserializeAttachment: () => attachment,
+    serializeAttachment: value => { attachment = value; },
+    close: code => closes.push(code), send() {}
+  };
+  const broadcaster = makeBroadcaster([socket]);
+  await broadcaster.webSocketMessage(socket, JSON.stringify({ type: 'subscribe', ids: ['hidden'], scope: 'all' }));
+  assert.deepEqual(closes, [1008]);
+  assert.deepEqual(attachment.serverIds, ['visible']);
+});
+
+test('visibility changes revoke access on existing public connections', async () => {
+  let attachment = { isAdmin: false, scope: 'all', serverIds: ['visible'], allowedServerIds: ['visible'] };
+  const socket = { deserializeAttachment: () => attachment, serializeAttachment: value => { attachment = value; }, close() {} };
+  const broadcaster = makeBroadcaster([socket], { DB: makeSettingsDb({ is_public: 'true' }) });
+  await broadcaster._refreshPublicFrontendAccess();
+  assert.deepEqual(attachment.allowedServerIds, []);
+});
+
+test('Worker overwrites client-provided internal administrator header', async () => {
+  let forwardedHeaders;
+  const env = makeWebSocketEnv({ is_public: 'true' }, request => { forwardedHeaders = request.headers; });
+  const response = await handleWebSocketUpgrade(makeWebSocketUpgradeRequest('https://example.com/api/ws', {
+    'X-CFSM-Frontend-Admin': '1'
+  }), env);
+  assert.equal(response.status, 101);
+  assert.equal(forwardedHeaders.get('X-CFSM-Frontend-Admin'), '0');
 });

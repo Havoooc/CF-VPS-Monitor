@@ -1,3 +1,4 @@
+import { getForwardRoutes, saveForwardRoutes, normalizeForwardRoutes } from '../utils/forwardRoutes.js';
 import { buildAuthCookie, buildClearAuthCookie, checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
@@ -10,7 +11,7 @@ import { addServerColumns } from '../database/updateDatabase.js';
 import { clearResourceAlertState, isSmtpNotificationTarget, sendNotification } from '../services/notification.js';
 import { getNextServerHistoryPartitionId, HISTORY_MAX_PARTITION_ID } from '../database/indexOptimization.js';
 import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
-import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
+import { notifyFrontendAccessChanged, scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
 
@@ -603,6 +604,7 @@ async function handleSaveThemeOptionsAction({ env, sys, data }) {
 
 async function handleListAction({ env }) {
   const servers = await getAllServers(env.DB);
+  const forwardRoutes = await getForwardRoutes(env.DB);
   const latestMetricsMap = await getLatestMetricsForAllServers(env.DB);
 
   const now = Date.now();
@@ -619,7 +621,7 @@ async function handleListAction({ env }) {
 
   const serversWithStatus = servers.map(server => {
     const latestMetrics = latestMetricsMap.get(server.id);
-    const item = { ...server, region_override: server.region || '' };
+    const item = { ...server, forward_routes: forwardRoutes[server.id], region_override: server.region || '' };
     let isOnline = false;
 
     if (latestMetrics) {
@@ -959,6 +961,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       if (hasResourceAlertRulesInput && !resourceAlertEnabled) {
         await clearResourceAlertState(env.DB);
       }
+      if (settings.is_public !== undefined) await notifyFrontendAccessChanged(env);
       Object.assign(sys, shouldSaveAppearanceOptions ? appearanceOptions : {}, siteOptions);
       if (shouldCloseAgentWssReports && (
         settings.wss_report_enabled !== undefined ||
@@ -1001,6 +1004,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       }
       
       clearServersListCache();
+      await notifyFrontendAccessChanged(env);
       
       return createSuccessResponse({ 
         success: true, 
@@ -1017,6 +1021,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       await deleteServer(env.DB, id);
       
       clearServersListCache();
+      await notifyFrontendAccessChanged(env);
       
       return createSuccessResponse({ 
         success: true, 
@@ -1037,6 +1042,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       }
       
       clearServersListCache();
+      await notifyFrontendAccessChanged(env);
       
       return createSuccessResponse({ 
         success: true, 
@@ -1047,6 +1053,11 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, traffic_alert_percent, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
+      }
+      let forwardRoutes;
+      if (Object.hasOwn(data, 'forward_routes')) {
+        try { forwardRoutes = normalizeForwardRoutes(data.forward_routes); }
+        catch (e) { return createBadRequestResponse(e.message); }
       }
       const effectiveConnectionMode = isWssReportConfigured(sys) ? connection_mode : 'http';
       const agentConfigResult = validateAgentConfigInput({
@@ -1141,7 +1152,14 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         return handleServerMutationError(env.DB, e, 'serverUpdateFailed');
       }
       
+      // 去程路由写在服务器字段更新之后：这里再抛错会返回 500，但服务器字段已经改了，
+      // 前端看到失败却重试也不会回滚。去程数据属于附加信息，保存失败只记录日志。
+      if (forwardRoutes) {
+        try { await saveForwardRoutes(env.DB, id, forwardRoutes); }
+        catch (error) { console.warn('[Admin] Forward routes not saved:', error?.message || error); }
+      }
       clearServersListCache();
+      await notifyFrontendAccessChanged(env);
       scheduleAgentConfigChanged(env, ctx, id);
       
       return createSuccessResponse({ 
@@ -1166,6 +1184,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       }
       
       clearServersListCache();
+      await notifyFrontendAccessChanged(env);
       
       return createSuccessResponse({ 
         success: true, 
@@ -1304,6 +1323,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       }
 
       clearServersListCache();
+      await notifyFrontendAccessChanged(env);
 
       return createSuccessResponse({
         success: true,

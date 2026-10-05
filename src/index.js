@@ -14,7 +14,7 @@ import { checkAuth, simpleAuthResponse, createWsTicket } from './middleware/auth
 import { AppError, createSuccessResponse, createBadRequestResponse, createNotFoundResponse, createErrorResponse } from './utils/errors.js';
 import { verifyTurnstileToken } from './utils/common.js';
 import { getCorsAllowedOrigins, createOptionsResponse, applyCors } from './utils/cors.js';
-import { getRemoteVersion } from './utils/version.js';
+import { getRemoteVersion, getCachedRemoteVersion } from './utils/version.js';
 import {
   HISTORY_ALL_QUERY_COLUMNS
 } from './utils/historyFields.js';
@@ -172,7 +172,9 @@ export default {
         }
 
         const isLoggedIn = await checkAuth(request, env, sys);
-        const remoteVersion = isLoggedIn ? await getRemoteVersion() : null;
+        // Release discovery is not needed to render the dashboard.
+        const remoteVersion = isLoggedIn ? getCachedRemoteVersion() : null;
+        if (isLoggedIn) ctx.waitUntil(getRemoteVersion());
 
         return createSuccessResponse({
           version: CURRENT_VERSION,

@@ -29,7 +29,7 @@ import { OsLogo } from "@/components/ui/OsLogo";
 import { MetricBar } from "./MetricBar";
 import { LatencyBars } from "./LatencyBars";
 import { QualityBars } from "./QualityBars";
-import { CanvasStrip, mixSrgbTowardWhite, safeCanvasColor } from "./CanvasStrip";
+import { TrafficSparkStrip } from "./TrafficSparkStrip";
 import {
   joinTagTitle,
   nodeDetailLinkLabels,
@@ -38,6 +38,7 @@ import {
 } from "./nodeCardShared";
 import { IpStackBadges } from "./IpStackBadges";
 import { HealthBucketTooltip } from "./HealthBucketTooltip";
+import { RouteSummary } from "./RouteSummary";
 import { MultiPingStatus } from "./MultiPingStatus";
 import { formatHealthBucketTooltip } from "./pingBucketText";
 import { clsx } from "clsx";
@@ -158,6 +159,9 @@ export const NodeCard = memo(function NodeCard({
               lines={homepagePingLines}
               density="large"
               returnRoute={node.return_route}
+              forwardRoutes={node.forward_routes}
+              returnRoutes={node.return_routes}
+              hasPublicIPv6={node.ipv6 === "1"}
               className="card-metric-section"
             />
           ) : (
@@ -173,6 +177,10 @@ export const NodeCard = memo(function NodeCard({
               lossColor={lossColor}
             />
           )}
+          {homepagePingLines.length === 0 && (
+            <RouteSummary returnRoute={node.return_route} forwardRoutes={node.forward_routes} returnRoutes={node.return_routes} hasPublicIPv6={node.ipv6 === "1"} />
+          )}
+
         </div>
 
         <NodeCardFooter
@@ -733,84 +741,27 @@ function TrafficStat({
   color: string;
   icon: ReactNode;
 }) {
-  // 按当前速率单位档取热力色:文字/圆点/实时点都随速度量级变色,图标仍用方向色(color)区分上下行。
+  // 按当前速率单位档取热力色:文字随速度量级变色;方向色(color)只留给图标与趋势线,
+  // 于是速率数字是「状态」、线条是「方向」,两种色相语义不再混用。
   const speedColor = speedRateColor(rate.unit);
   return (
     <div className="traffic-stat">
-      <div className="traffic-stat-head">
-        <div className="traffic-stat-label">
-          <span style={{ color }}>{icon}</span>
-          <span>{direction}</span>
-        </div>
-        <span className="traffic-stat-value tabular" style={{ color: speedColor }}>
-          {rate.value}
-          <span className="traffic-stat-unit">{rate.unit}</span>
-        </span>
+      <div className="traffic-stat-label">
+        <span style={{ color }}>{icon}</span>
+        <span>{direction}</span>
       </div>
+      <span className="traffic-stat-value tabular" style={{ color: speedColor }}>
+        {rate.value}
+        <span className="traffic-stat-unit">{rate.unit}</span>
+      </span>
       <div className="traffic-stat-trend" aria-label={live ? (active ? "流量趋势" : "当前空闲") : "离线流量趋势"}>
-        <TrafficDotStrip samples={samples} color={speedColor} redrawKey={redrawKey} />
+        <TrafficSparkStrip samples={samples} color={color} redrawKey={redrawKey} />
       </div>
-      <div className="traffic-stat-foot">
-        <div className="traffic-stat-total-label">
-          <span>{monthly ? "本月" : "累计"}{totalLabel}</span>
-        </div>
-        <span className="tabular">{total}</span>
+      <div className="traffic-stat-total">
+        <span className="traffic-stat-total-label">{monthly ? "本月" : "累计"}{totalLabel}</span>
+        <span className="traffic-stat-total-value tabular">{total}</span>
       </div>
     </div>
-  );
-}
-
-function TrafficDotStrip({
-  samples,
-  color,
-  redrawKey,
-}: {
-  samples: TrafficTrendSample[];
-  color: string;
-  redrawKey: string;
-}) {
-  // 除非 traffic samples(缓存的 store 快照)或 color 变了,否则保持稳定,
-  // 这样 canvas 只在趋势真的变动时才重绘。
-  const draw = useCallback(
-    (ctx: CanvasRenderingContext2D, width: number, height: number) => {
-      if (samples.length === 0) return;
-      const slotWidth = width / samples.length;
-      // 一次性归一化:safeCanvasColor 解析 var() 并把 hsl() 转成 rgb(),所以
-      // baseColor/inactiveColor 对 canvas 安全,mixSrgbTowardWhite 的 hex 输出也是 ——
-      // 下面循环里不需要再逐点归一化颜色。
-      const baseColor = safeCanvasColor(color);
-      const inactiveColor = safeCanvasColor("var(--progress-bg)");
-
-      samples.forEach((sample, index) => {
-        const hasTraffic = sample.value > 0;
-        const scale = hasTraffic ? 0.72 + sample.level * 0.82 : 0.46;
-        const radius = 2 * scale;
-        // 用 JS 做 sRGB 混色(不用 canvas 的 color-mix() 字符串,老 WebKit 不认)。
-        const tone = hasTraffic
-          ? mixSrgbTowardWhite(baseColor, (68 + sample.level * 20) / 100)
-          : inactiveColor;
-        const x = index * slotWidth + slotWidth / 2;
-        const y = height / 2;
-
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = tone;
-        ctx.globalAlpha = hasTraffic ? Math.min(1, sample.opacity + 0.05) : 0.46;
-        ctx.fill();
-      });
-
-      ctx.globalAlpha = 1;
-    },
-    [samples, color],
-  );
-
-  return (
-    <CanvasStrip
-      className="traffic-dot-strip"
-      height={10}
-      redrawKey={redrawKey}
-      draw={draw}
-    />
   );
 }
 

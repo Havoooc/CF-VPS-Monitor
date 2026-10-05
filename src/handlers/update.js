@@ -1,3 +1,4 @@
+import { persistRouteReport } from "../services/routes.js";
 import { saveMetricsHistory } from '../database/schema.js';
 import { getServerDetail, clearServerDetailCache, patchServerDetailCache } from '../utils/cache.js';
 import { evaluateTrafficAlert } from '../services/notification.js';
@@ -5,13 +6,11 @@ import {
   DISK_IO_FIELD_TO_COLUMN,
   DISK_IO_METRIC_FIELDS,
   mergeMetricsIntoServer,
-  coerceNumericMetricFields,
-  normalizeReturnRoute
+  coerceNumericMetricFields
 } from '../utils/metrics.js';
 import { createErrorResponse, createUnauthorizedResponse, createNotFoundResponse, createBadRequestResponse } from '../utils/errors.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { getResourceAlertConfig, getWssReportScheduleState, isWssReportConfigured, loadSiteSettings, normalizeBooleanSetting } from '../utils/settings.js';
-import { sendNotification } from '../services/notification.js';
 import { cacheLatestReportUpdate } from '../utils/latestReportCache.js';
 import {
   hasRecentFrontendRealtimeActivity,
@@ -608,60 +607,7 @@ export async function handleUpdate(request, env, ctx) {
     const latestSample = samples[samples.length - 1];
     const latestMetrics = getReportMetrics(data, latestSample);
     const historyMetrics = getHistoryMetrics(data, samples, latestSample);
-    // 回程线路：白名单校验 + 仅在值发生变化时写库。
-    //
-    // 校验失败时直接跳过，保留数据库里已有的值——探针在本地缓存文件缺失时
-    // 会回落成 `{}`（cf-probe.sh:1144），旧实现会把面板上的线路清空。
-    // 服务器详情已在本次请求开头读取，直接比较规范化值，避免每个心跳都执行
-    // 一次 no-op UPDATE；首次补值或路线字段实际变化时仍写库。
-    const returnRoute = normalizeReturnRoute(latestMetrics.return_route);
-    if (returnRoute) {
-      const serializedRoute = JSON.stringify(returnRoute);
-      const oldRoute = normalizeReturnRoute(serverDetail.return_route);
-      if (oldRoute) {
-        const changes = [];
-        const carrierMap = [["telecom", "电信"], ["unicom", "联通"], ["mobile", "移动"]];
-        for (const [key, label] of carrierMap) {
-          if (oldRoute[key] && returnRoute[key] && oldRoute[key] !== returnRoute[key]) {
-            changes.push({
-              carrier: label,
-              from: oldRoute[key],
-              to: returnRoute[key]
-            });
-          }
-        }
-        if (changes.length > 0) {
-          ctx.waitUntil((async () => {
-            try {
-              const settings = await loadSiteSettings(env.DB);
-              const changeList = changes.map(c => `${c.carrier}：${c.from} ➔ ${c.to}`).join('\n');
-              const serverName = serverDetail.name || id;
-              await sendNotification(settings, changeList, {
-                event: '回程线路异动告警',
-                emoji: '🔀',
-                client: serverName,
-                clients: [serverName],
-                count: changes.length,
-                message: `服务器【${serverName}】三网回程线路发生变更：\n${changeList}`
-              });
-            } catch (err) {
-              console.error('[Notification] 线路异动通知失败:', err);
-            }
-          })());
-        }
-      }
-
-      const oldSerializedRoute = oldRoute ? JSON.stringify(oldRoute) : '';
-      if (oldSerializedRoute !== serializedRoute) {
-        await env.DB.prepare(
-          "UPDATE servers SET return_route = ? WHERE id = ? AND COALESCE(return_route, '') <> ?"
-        )
-          .bind(serializedRoute, id, serializedRoute)
-          .run();
-        serverDetail.return_route = serializedRoute;
-        patchServerDetailCache(id, { return_route: serializedRoute });
-      }
-    }
+    await persistRouteReport(env, id, latestMetrics, serverDetail, ctx);
     await saveMetricsHistory(
       env.DB,
       id,
@@ -738,7 +684,7 @@ function isWebSocketUpgradeRequest(request) {
   return !!upgradeHeader && upgradeHeader.toLowerCase() === 'websocket';
 }
 
-async function forwardWebSocketUpgrade(request, env, internalPath, logPrefix) {
+async function forwardWebSocketUpgrade(request, env, internalPath, logPrefix, isAdmin = false) {
   if (!env || !env.METRICS_BROADCASTER) {
     return new Response(JSON.stringify({ error: 'WebSocket not enabled', code: 503 }), {
       status: 503,
@@ -758,6 +704,8 @@ async function forwardWebSocketUpgrade(request, env, internalPath, logPrefix) {
     const realOrigin = new URL(request.url).origin;
     const headers = new Headers(request.headers);
     headers.set('X-Real-Origin', realOrigin);
+    // Never trust a client-supplied internal authorization header.
+    headers.set('X-CFSM-Frontend-Admin', isAdmin ? '1' : '0');
     if (request.cf?.country && !headers.get('cf-ipcountry')) {
       headers.set('cf-ipcountry', request.cf.country);
     }
@@ -778,14 +726,15 @@ async function forwardWebSocketUpgrade(request, env, internalPath, logPrefix) {
 
 export async function handleWebSocketUpgrade(request, env) {
   const settings = await loadSiteSettings(env.DB, { forceRefresh: true });
-  if (settings?.is_public !== 'true' && !await checkWebSocketAuth(request, env, settings)) {
+  const isAdmin = await checkWebSocketAuth(request, env, settings);
+  if (settings?.is_public !== 'true' && !isAdmin) {
     return new Response(JSON.stringify({ error: 'Unauthorized', code: 401 }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' }
     });
   }
 
-  const response = await forwardWebSocketUpgrade(request, env, '/ws', '[ws]');
+  const response = await forwardWebSocketUpgrade(request, env, '/ws', '[ws]', isAdmin);
   if (response?.status === 101) {
     markFrontendRealtimeActive();
   }

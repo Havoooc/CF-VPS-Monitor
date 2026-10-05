@@ -9,6 +9,10 @@ let cachedRemoteVersionAt = 0;
 let cachedRemoteVersionFailureAt = 0;
 let remoteVersionPromise = null;
 
+export function getCachedRemoteVersion() {
+  return cachedRemoteVersion;
+}
+
 export async function getRemoteVersion() {
   const now = Date.now();
   if (cachedRemoteVersion && now - cachedRemoteVersionAt < REMOTE_VERSION_TTL) {
