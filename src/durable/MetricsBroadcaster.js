@@ -2189,6 +2189,9 @@ export class MetricsBroadcaster {
 
   _broadcastBatch(updates, ts = Date.now(), targetScope = null) {
     const websockets = this._getFrontendWebSockets();
+    // A report is immutable during this synchronous broadcast. Mask each
+    // delivered update once, while keeping authorization per connection.
+    const maskedUpdates = new Map();
 
     for (const ws of websockets) {
       const attachment = ws.deserializeAttachment();
@@ -2204,7 +2207,10 @@ export class MetricsBroadcaster {
       const scopedUpdates = updates
         .filter(item => this._canDeliverFrontend(attachment, item.serverId) &&
           this._shouldDeliver(attachment.scope, item.serverId, attachment.serverIds))
-        .map(maskPublicIpUpdate);
+        .map(item => {
+          if (!maskedUpdates.has(item)) maskedUpdates.set(item, maskPublicIpUpdate(item));
+          return maskedUpdates.get(item);
+        });
       if (scopedUpdates.length === 0) continue;
 
       const message = JSON.stringify({
