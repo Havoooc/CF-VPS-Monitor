@@ -31,6 +31,7 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0, serverI
   let reconnectDelay = TIME.RECONNECT_INITIAL_DELAY_MS
   let reconnectAttempts = 0
   let connectionLifetimeTimer = null
+  let connectGeneration = 0
   const MAX_REPLAY_DELAY = 120000
   let isConnected = false
   const replayTimers = new Set()
@@ -144,20 +145,30 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0, serverI
     }
   }
 
-  const connect = () => {
-    manualClose = false
+  const connect = async () => {
+    if (manualClose) return
+    const generation = ++connectGeneration
     let socket = null
     try {
       const url = new URL(`${getWsBaseByIndex(apiIndex)}/api/ws`)
       url.searchParams.set('subscribe', scope)
       const token = getJwtToken()
       if (token && !isSameHostWebSocket(url)) {
-        url.searchParams.set('token', token)
+        const result = await http.postByIndex('/api/ws-ticket', {}, apiIndex, {
+          autoRedirect: false,
+          includeTurnstile: false,
+          timeoutMs: 15000
+        })
+        if (manualClose || generation !== connectGeneration) return
+        if (!result.data?.ticket) throw new Error('WebSocket ticket unavailable')
+        url.searchParams.set('ticket', result.data.ticket)
       }
       socket = new WebSocket(url.toString())
       ws = socket
     } catch (e) {
+      if (manualClose || generation !== connectGeneration) return
       setStatus(false, 'WebSocket not supported')
+      scheduleReconnect()
       return
     }
 
@@ -231,10 +242,9 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0, serverI
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
       reconnectAttempts++
-      const delay = reconnectDelay
       reconnectDelay = Math.min(reconnectDelay * 2, TIME.RECONNECT_MAX_DELAY_MS)
-      setTimeout(connect, delay)
-    }, 50)
+      connect()
+    }, reconnectDelay + 50)
   }
 
   connect()
@@ -242,6 +252,7 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0, serverI
   return {
     close() {
       manualClose = true
+      connectGeneration++
       reconnectAttempts = TIME.MAX_RECONNECT_ATTEMPTS
       clearReplayTimers()
       clearConnectionLifetimeTimer()
@@ -251,6 +262,7 @@ export const createLiveSocket = (subscribe, handlers = {}, apiIndex = 0, serverI
     },
     reconnect() {
       manualClose = false
+      connectGeneration++
       reconnectAttempts = 0
       clearReplayTimers()
       clearConnectionLifetimeTimer()

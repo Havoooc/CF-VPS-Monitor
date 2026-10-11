@@ -639,10 +639,12 @@ export async function saveMetricsHistory(db, serverId, historyPartitionId, metri
         await insertHistoryRow();
       } catch (retryError) {
         console.error('保存历史数据失败:', retryError);
+        throw retryError;
       }
       return;
     }
     console.error('保存历史数据失败:', e);
+    throw e;
   }
 }
 
@@ -681,11 +683,15 @@ export async function getLatestMetricsForAllServers(db) {
   try {
     const servers = await getAllServers(db);
 
-    const entries = await Promise.all(
-      servers.map(s =>
-        getLatestMetrics(db, s.id, s).then(metrics => [s.id, metrics])
-      )
-    );
+    const entries = [];
+    // Bound in-flight D1 work, just like the dashboard latency queries.
+    for (let offset = 0; offset < servers.length; offset += DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY) {
+      entries.push(...await Promise.all(
+        servers.slice(offset, offset + DASHBOARD_LATENCY_WINDOW_QUERY_CONCURRENCY).map(s =>
+          getLatestMetrics(db, s.id, s).then(metrics => [s.id, metrics])
+        )
+      ));
+    }
 
     const result = new Map(entries.filter(([, m]) => m !== null));
     setLatestMetricsCache(result);

@@ -686,11 +686,22 @@ func isLegacyShellCommand(cmdline []string) bool {
 
 func acquireInstanceLock(paths Paths) (func(), error) {
 	lockPath := filepath.Join(os.TempDir(), paths.ServiceName+".lock")
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o666)
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o666)
 	if err != nil {
 		return nil, fmt.Errorf("检查运行实例失败 %s: %w", lockPath, err)
 	}
-	_ = os.Chmod(lockPath, 0o666)
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("检查实例锁文件失败: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.Mode().IsRegular() || !ok || stat.Nlink != 1 {
+		_ = f.Close()
+		return nil, errors.New("实例锁必须是无硬链接的普通文件")
+	}
+	// Operate on the validated descriptor, not a path that can be replaced.
+	_ = f.Chmod(0o666)
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_, _ = f.Seek(0, io.SeekStart)
 		data, _ := io.ReadAll(f)

@@ -116,3 +116,69 @@ test('frontend WebSocket closes at its lifetime limit without reconnecting', asy
     await vite.close()
   }
 })
+
+test('cross-origin Vue sockets exchange JWT for a ticket and ignore stale ticket responses', async () => {
+  const vite = await createServer({ configFile: false, appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } })
+  const { createLiveSocket } = await vite.ssrLoadModule('/src/frontend/utils/api.js')
+  const originals = Object.fromEntries(['window', 'localStorage', 'WebSocket', 'fetch', 'setTimeout', 'clearTimeout'].map(key => [key, globalThis[key]]))
+  const requests = []
+  const timers = []
+  const clients = []
+  globalThis.window = { location: { origin: 'https://ui.invalid', protocol: 'https:', host: 'ui.invalid' },
+    __APP_API_BASES__: ['https://first.invalid', 'https://second.invalid'] }
+  globalThis.localStorage = { getItem: key => key === 'jwt_token' ? 'long-lived-jwt' : '', removeItem() {} }
+  globalThis.WebSocket = FakeWebSocket
+  globalThis.fetch = (url, init) => new Promise(resolve => requests.push({ url, init, resolve }))
+  globalThis.setTimeout = (callback, delay) => {
+    const timer = { callback, delay, cleared: false }
+    timers.push(timer)
+    return timer
+  }
+  globalThis.clearTimeout = timer => { if (timer) timer.cleared = true }
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+  FakeWebSocket.instances = []
+  try {
+    const live = createLiveSocket('all', {}, 1, ['node'])
+    clients.push(live)
+    assert.equal(requests[0].url, 'https://second.invalid/api/ws-ticket')
+    assert.equal(requests[0].init.headers.Authorization, 'Bearer long-lived-jwt')
+    requests[0].resolve(new Response(JSON.stringify({ ticket: 'short-lived-ticket' })))
+    await settle()
+    const url = new URL(FakeWebSocket.instances[0].url)
+    assert.equal(url.host, 'second.invalid')
+    assert.equal(url.searchParams.get('ticket'), 'short-lived-ticket')
+    assert.equal(url.searchParams.has('token'), false)
+    assert.equal(url.toString().includes('long-lived-jwt'), false)
+    live.close()
+
+    const closed = createLiveSocket('all', {}, 1)
+    clients.push(closed)
+    closed.close()
+    requests[1].resolve(new Response(JSON.stringify({ ticket: 'ignored-ticket' })))
+    await settle()
+    assert.equal(FakeWebSocket.instances.length, 1)
+
+    const reconnected = createLiveSocket('all', {}, 1)
+    clients.push(reconnected)
+    reconnected.reconnect()
+    requests[3].resolve(new Response(JSON.stringify({ ticket: 'new-ticket' })))
+    await settle()
+    requests[2].resolve(new Response(JSON.stringify({ ticket: 'stale-ticket' })))
+    await settle()
+    assert.equal(FakeWebSocket.instances.length, 2)
+    const current = FakeWebSocket.instances[1]
+    assert.equal(new URL(current.url).searchParams.get('ticket'), 'new-ticket')
+    current.emit('close')
+    const reconnectTimer = timers.findLast(timer => !timer.cleared)
+    reconnected.close()
+    assert.equal(reconnectTimer.cleared, true)
+    reconnectTimer.callback() // Even an already queued callback cannot reopen a closed client.
+    await settle()
+    assert.equal(requests.length, 4)
+    assert.equal(FakeWebSocket.instances.length, 2)
+  } finally {
+    clients.forEach(client => client.close())
+    for (const [key, value] of Object.entries(originals)) globalThis[key] = value
+    await vite.close()
+  }
+})
