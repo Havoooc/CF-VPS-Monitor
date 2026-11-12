@@ -83,6 +83,11 @@ export type GpuEntry = z.output<typeof GpuEntrySchema>;
 export const LatencyPointSchema = z
   .object({
     ts: looseNumber.default(0),
+    /**
+     * 网格桶所引用的原始测量时间。真实样本每个桶一般不同；同一原始时间连续出现
+     * 才说明后端用最近邻复制了一份回填数据。
+     */
+    sample_timestamp: looseNumber.optional(),
     ct: nullableNumber,
     cu: nullableNumber,
     cm: nullableNumber,

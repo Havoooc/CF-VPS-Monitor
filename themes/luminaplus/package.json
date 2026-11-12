@@ -1,7 +1,7 @@
 {
   "name": "cfsm-theme-luminaplus",
   "private": true,
-  "version": "1.2.27",
+  "version": "1.2.28",
   "type": "module",
   "packageManager": "npm@11",
   "description": "Built-in LuminaPlus default theme for CF-VPS-Monitor",
