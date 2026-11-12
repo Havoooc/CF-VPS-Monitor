@@ -509,9 +509,14 @@ describe("丢弃后端窗口里复制出来的格子", () => {
   const NOW = Date.now();
   const STEP = 120_000;
 
-  function windowOf(values: Array<[number, number, number]>): PingLiveSample[] {
+  function windowOf(
+    values: Array<[number, number, number]>,
+    measuredTimes?: number[],
+    step = STEP,
+  ): PingLiveSample[] {
     return values.map(([ct, cu, cm], index) => ({
-      time: NOW - (values.length - 1 - index) * STEP,
+      time: NOW - (values.length - 1 - index) * step,
+      ...(measuredTimes ? { measuredTime: measuredTimes[index] } : {}),
       ping: {
         ...EMPTY_CARRIER_PING,
         ct,
@@ -526,10 +531,38 @@ describe("丢弃后端窗口里复制出来的格子", () => {
 
   it("刚加进来的节点：整窗口都是复印件，一格都不画", () => {
     const uuid = "fresh-node";
-    // 线上实测形状：30 格全是 1/1/1，而历史表里只有 6 分钟的行。
-    seedPingHistory(uuid, windowOf(Array.from({ length: 30 }, () => [1, 1, 1])));
+    // 30 格都指向同一个原始测量，才是可证明的最近邻回填。
+    const sourceTime = NOW - 10 * 60_000;
+    seedPingHistory(
+      uuid,
+      windowOf(
+        Array.from({ length: 30 }, () => [1, 1, 1]),
+        Array.from({ length: 30 }, () => sourceTime),
+      ),
+    );
 
     expect(getPingHistorySnapshot(uuid)).toHaveLength(0);
+  });
+
+  it("Nosla 的稳定真实测量即使数值完全相同也保留全部点", () => {
+    const uuid = "nosla-stable";
+    const samples = windowOf(
+      Array.from({ length: 20 }, () => [136, 164, 131]),
+      Array.from({ length: 20 }, (_, index) => NOW - (19 - index) * 6 * 60_000),
+      6 * 60_000,
+    );
+
+    seedPingHistory(uuid, samples);
+
+    const kept = getPingHistorySnapshot(uuid);
+    expect(kept).toHaveLength(20);
+    expect(kept.every((sample) => sample.ping.ct === 136)).toBe(true);
+    const buckets = buildPingBuckets(
+      buildPingOverviewItem(uuid, 1, kept),
+      30,
+      NOW,
+    );
+    expect(buckets.filter((bucket) => bucket.total > 0).length).toBeGreaterThan(5);
   });
 
   it("只丢重复段，末尾真值留着", () => {
@@ -540,7 +573,14 @@ describe("丢弃后端窗口里复制出来的格子", () => {
       [134, 145, 149],
       [137, 141, 149],
     ];
-    seedPingHistory(uuid, windowOf(values));
+    const copiedAt = NOW - 60 * 60_000;
+    const measuredTimes = [
+      ...Array.from({ length: 27 }, () => copiedAt),
+      NOW - 4 * 60_000,
+      NOW - 2 * 60_000,
+      NOW,
+    ];
+    seedPingHistory(uuid, windowOf(values, measuredTimes));
 
     const kept = getPingHistorySnapshot(uuid);
     expect(kept).toHaveLength(3);
@@ -553,7 +593,10 @@ describe("丢弃后端窗口里复制出来的格子", () => {
       { length: 30 },
       (_, index) => [130 + (index % 7), 140 + (index % 5), 150 + (index % 3)] as [number, number, number],
     );
-    seedPingHistory(uuid, windowOf(values));
+    seedPingHistory(
+      uuid,
+      windowOf(values, values.map((_, index) => NOW - (29 - index) * STEP)),
+    );
 
     expect(getPingHistorySnapshot(uuid)).toHaveLength(30);
   });
@@ -561,7 +604,13 @@ describe("丢弃后端窗口里复制出来的格子", () => {
   it("新节点刷新之后：只画真实覆盖到的那几分钟，其余留空", () => {
     const uuid = "fresh-node-refreshed";
     // 后端窗口整段是复印件（线上 Uzumaru-tw 的形状），历史表里只有最近 6 分钟。
-    seedPingHistory(uuid, windowOf(Array.from({ length: 30 }, () => [1, 1, 1])));
+    seedPingHistory(
+      uuid,
+      windowOf(
+        Array.from({ length: 30 }, () => [1, 1, 1]),
+        Array.from({ length: 30 }, () => NOW - 10 * 60_000),
+      ),
+    );
     seedMeasuredHistory(
       uuid,
       Array.from({ length: 12 }, (_, index) => ({
@@ -578,18 +627,25 @@ describe("丢弃后端窗口里复制出来的格子", () => {
     expect(active).toBeLessThanOrEqual(6);
   });
 
-  it("短暂重复（不到门槛）不算复印件", () => {
-    const uuid = "short-repeat";
-    const values: Array<[number, number, number]> = [
-      [130, 140, 150],
-      [131, 141, 151],
-      [131, 141, 151],
-      [131, 141, 151],
-      [132, 142, 152],
-      [133, 143, 153],
-    ];
-    seedPingHistory(uuid, windowOf(values));
+  it("重复值各有原始采样时间时，连续五格以上也不是复印件", () => {
+    const uuid = "stable-repeat";
+    const values = Array.from({ length: 8 }, () => [131, 141, 151] as [number, number, number]);
+    seedPingHistory(
+      uuid,
+      windowOf(
+        values,
+        values.map((_, index) => NOW - (7 - index) * 6 * 60_000),
+        6 * 60_000,
+      ),
+    );
 
-    expect(getPingHistorySnapshot(uuid)).toHaveLength(6);
+    expect(getPingHistorySnapshot(uuid)).toHaveLength(8);
+  });
+
+  it("旧后端没有原始采样时间时保守保留重复值", () => {
+    const uuid = "legacy-window";
+    seedPingHistory(uuid, windowOf(Array.from({ length: 8 }, () => [131, 141, 151])));
+
+    expect(getPingHistorySnapshot(uuid)).toHaveLength(8);
   });
 })

@@ -508,6 +508,18 @@ describe("parseLatencyWindow", () => {
     expect(window[0]?.ping.ct).toBe(23);
     expect(window[0]?.ping.lossCt).toBeNull();
   });
+
+  it("keeps the original measurement timestamp for backfill detection", () => {
+    const measuredAt = NOW - 90_000;
+    const window = parseLatencyWindow(
+      server({
+        ping: [{ ts: NOW, sample_timestamp: measuredAt, ct: 136, cu: 164, cm: 131 }],
+      }),
+    );
+
+    expect(window[0]?.time).toBe(NOW);
+    expect(window[0]?.measuredTime).toBe(measuredAt);
+  });
 });
 
 describe("inferIntervalSeconds", () => {

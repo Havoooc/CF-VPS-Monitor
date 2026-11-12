@@ -82,8 +82,51 @@ test('dashboard latency history samples two hours from D1 into at most 20 real p
     assert.equal(window.ping.length, 20);
     assert.equal(window.loss.length, 20);
     assert.equal(new Set(window.ping.map(point => point.ts)).size, 20);
+    assert.equal(new Set(window.ping.map(point => point.sample_timestamp)).size, 20);
     assert.equal(window.ping.every(point => point.ct >= 20), true);
     assert.equal(window.loss.every(point => point.ct >= 0 && point.ct <= 100), true);
+  } finally {
+    await miniflare.dispose();
+  }
+});
+
+test('dashboard latency history marks stable repeated readings as distinct source samples', async () => {
+  const miniflare = createMiniflare();
+
+  try {
+    const db = await miniflare.getD1Database('DB');
+    await createHistoryTable(db);
+
+    const partitionId = 8;
+    const start = Date.UTC(2026, 6, 29, 3, 0, 0);
+    const rows = [];
+    for (let index = 0; index < 120; index++) {
+      // Nosla's real shape: every bucket can have the same integer latency and zero loss.
+      rows.push(`(${buildHistoryId(partitionId, start + index * 60_000)}, ${start + index * 60_000}, 136, 164, 131, 0, 0, 0, 0, 0)`);
+    }
+
+    await db.prepare(`
+      INSERT INTO metrics_history (
+        id, timestamp,
+        ping_ct, ping_cu, ping_cm, ping_bd,
+        loss_ct, loss_cu, loss_cm, loss_bd
+      )
+      VALUES ${rows.join(',')}
+    `).run();
+
+    const history = await getDashboardLatencyHistory(db, [{
+      id: 'nosla-shaped-server',
+      history_partition_id: partitionId,
+      timestamp: start
+    }], {
+      now: start + 120 * 60_000,
+      cache: false
+    });
+
+    const window = history.get('nosla-shaped-server');
+    assert.equal(window.ping.length, 20);
+    assert.equal(window.ping.filter(point => point.ct === 136 && point.cu === 164 && point.cm === 131).length, 20);
+    assert.equal(new Set(window.ping.map(point => point.sample_timestamp)).size, 20);
   } finally {
     await miniflare.dispose();
   }

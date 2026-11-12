@@ -31,6 +31,11 @@ import type { CarrierPingSnapshot } from "@/types/cfsm";
 
 export interface PingLiveSample {
   time: number;
+  /**
+   * 这个网格桶引用的原始测量时间。只有后端通过最近邻把同一条原始记录复制到多个桶时，
+   * 相邻样本才会共享这个时间；真实稳定测量即使数值相同，也各有自己的原始采样时间。
+   */
+  measuredTime?: number;
   ping: CarrierPingSnapshot;
   /**
    * 这个样本在丢包加权平均里算几份。合并时才算出来，不落盘。
@@ -78,9 +83,9 @@ const DEFAULT_WINDOW_STEP_MS = 120_000;
 /**
  * 判定后端窗口「这一段是复制出来的」所需的连续相同格数。
  *
- * 后端 `buildFixedLatencySeries` 用无上限最近邻填满 30 格，桶里缺的那些格全是同一个样本的
- * 复印件（详见 CLAUDE.md）。所有线路的延迟**和**丢包同时逐字节相同、还连着好几格，
- * 真探测不会这样 —— 取 4 格（8 分钟）作为门槛，宁可漏判也不误杀。
+ * 数值相同本身不能说明是回填：稳定线路会连续返回相同的整数延迟和 0% 丢包。后端现在会
+ * 保留每个桶引用的 `sample_timestamp`，所以只有**同一条原始记录**被连续复制到多格时才删。
+ * 旧后端不提供原始时间时一律保留，宁可显示真实稳定值，也不误删。
  */
 const BACKFILL_RUN_MIN_LENGTH = 4;
 /** 本地样本间隔推不出来时的兜底。 */
@@ -498,13 +503,12 @@ function sameSeries(a: readonly PingLiveSample[], b: readonly PingLiveSample[]):
 /**
  * 丢掉后端窗口里复制出来的那些格子。
  *
- * 后端不是「没有数据就留空」，而是保证凑够 30 格：缺的格子取距离最近的样本（`findNearestLatencySample`
- * 没有距离上限）复制过来，时间戳照 2 分钟网格铺满一小时。于是一台刚加进来 7 分钟的节点，
- * 窗口里也会有一整个小时的「数据」—— 线上实测：30 格全是 `1/1/1`，而历史表里只有 13 行、跨度 6.3 分钟。
+ * 旧版后端为了凑满窗口，会把最近一条记录复制到附近多个网格桶。外层网格时间戳随之变化，
+ * 单看延迟和丢包无法和“稳定真实测量”区分；原实现因此把 Nosla 20 个真实稳定点误删成 5 个。
  *
- * 复印件的特征是**连续若干格逐字节相同**（所有线路的延迟和丢包同时一模一样）。真探测做不到这个，
- * 所以按 {@link BACKFILL_RUN_MIN_LENGTH} 格为界把整段丢掉 —— 留空比画一段编出来的数据诚实，
- * 图表对没值的槽位本来就是留白的，丢包加权平均也不会再被这些格子带偏。
+ * 现在后端会下发每个桶引用的原始 `sample_timestamp`。复印件必须同时满足“连续值相同”和
+ * “原始测量时间相同”；真实稳定样本虽然值相同，但原始时间逐条不同，因此会保留。
+ * 旧后端没有原始时间时不删任何点，靠保守回退避免误伤。
  *
  * 整段丢掉而不是「保留一格」：复制源可能在这段的任意一端，留哪一格都是猜。真值那一格在
  * 相邻的非重复段里本来就还在。
@@ -520,8 +524,13 @@ function dropBackfilledRuns(
   const kept: PingLiveSample[] = [];
   let runStart = 0;
   for (let index = 1; index <= window.length; index += 1) {
+    const runMeasuredTime = window[runStart]!.measuredTime;
     const same =
-      index < window.length && samePing(window[index]!.ping, window[runStart]!.ping);
+      index < window.length &&
+      runMeasuredTime != null &&
+      runMeasuredTime > 0 &&
+      window[index]!.measuredTime === runMeasuredTime &&
+      samePing(window[index]!.ping, window[runStart]!.ping);
     if (same) continue;
     const runLength = index - runStart;
     if (runLength < BACKFILL_RUN_MIN_LENGTH || hasTimeout(window[runStart]!.ping)) {

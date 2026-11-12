@@ -348,6 +348,13 @@ function buildLatencyHistoryPoint(row, metricType, { includeEmpty = false } = {}
   if (!Number.isFinite(timestamp) || timestamp <= 0) return null;
 
   const point = { ts: timestamp };
+  // Dashboard buckets use a synthetic grid timestamp. Keep the original row timestamp so
+  // clients can distinguish a repeated real reading from the same row reused by a
+  // nearest-neighbour backfill.
+  const sampleTimestamp = Number(row?.sample_timestamp);
+  if (Number.isFinite(sampleTimestamp) && sampleTimestamp > 0) {
+    point.sample_timestamp = sampleTimestamp;
+  }
   for (const field of LATENCY_NODE_FIELDS) {
     const column = `${metricType}_${field}`;
     if (!Object.prototype.hasOwnProperty.call(row, column)) continue;

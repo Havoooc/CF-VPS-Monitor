@@ -403,7 +403,12 @@ export function parseLatencyWindow(server: CfsmServer): PingLiveSample[] {
       ping[key] = probeLatency(point[key], lossValue);
       ping[CARRIER_LOSS_KEYS[key]] = lossValue;
     }
-    out.push({ time, ping });
+    const measuredTime = normalizeTimestamp(point.sample_timestamp);
+    out.push({
+      time,
+      ...(measuredTime > 0 ? { measuredTime } : {}),
+      ping,
+    });
   }
   return out.sort((left, right) => left.time - right.time);
 }
